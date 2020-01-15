@@ -55,7 +55,7 @@ public:
   {}
 
   bool stop_requested() override {
-    if(flag) {
+    if(!flag) {
       MPI_Test(&stop_request, &flag, MPI_STATUS_IGNORE);
     }
     return flag;
@@ -265,7 +265,10 @@ void worker(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
         break;
     }
   }
-  MPI_Wait(&stop_request, MPI_STATUS_IGNORE);
+
+  if(!stop_token.stop_requested()) {
+    MPI_Wait(&stop_request, MPI_STATUS_IGNORE);
+  }
 }
 
 }
