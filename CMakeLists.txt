@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(libdistributed VERSION "0.0.2" LANGUAGES CXX)
+project(libdistributed VERSION "0.0.3" LANGUAGES CXX)
 
 #correct was to set a default build type
 # https://blog.kitware.com/cmake-and-the-default-build-type/
@@ -31,8 +31,12 @@ add_library(libdistributed
     src/work_queue.cc
 
   #public headers
-    include/work_queue.h
-    include/types.h
+    include/libdistributed_stop_token.h
+    include/libdistributed_types.h
+    include/libdistributed_work_queue.h
+
+  #private headers
+    include/libdistributed_work_queue_impl.h
   )
 target_include_directories(
   libdistributed
@@ -50,13 +54,14 @@ if(USE_CLANG_TIDY)
   set_target_properties(libdistributed PROPERTIES C_CLANG_TIDY "${CLANG_TIDY}")
 endif()
 
-export(TARGETS libdistributed NAMESPACE LibDistributed:: FILE LibDistributed.cmake)
-install(TARGETS libdistributed EXPORT LibDistributed
+export(TARGETS libdistributed NAMESPACE LibDistributed:: FILE
+  LibDistributedConfig.cmake)
+install(TARGETS libdistributed EXPORT LibDistributedConfig
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   )
-install(EXPORT LibDistributed NAMESPACE LibDistributed:: DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/LibDistributed/cmake)
+install(EXPORT LibDistributedConfig NAMESPACE LibDistributed:: DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/LibDistributed/cmake)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/libdistributed)
 
 option(BUILD_DOCS "build the documetation" OFF)

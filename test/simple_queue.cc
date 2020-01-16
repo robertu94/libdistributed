@@ -5,7 +5,7 @@
 #include <cmath>
 
 #include <mpi.h>
-#include <work_queue.h>
+#include <libdistributed_work_queue.h>
 
 using namespace std::literals::chrono_literals;
 namespace queue = distributed::queue;

@@ -1,3 +1,5 @@
+#ifndef LIBDISTRIBUTED_TYPES_H
+#define LIBDISTRIBUTED_TYPES_H
 #include <array>
 #include <vector>
 #include <algorithm>
@@ -184,3 +186,5 @@ namespace distributed {
 
   }
 }
+
+#endif

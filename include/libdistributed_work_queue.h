@@ -1,8 +1,10 @@
+#ifndef LIBDISTRIBUTED_WORK_QUEUE_H
+#define LIBDISTRIBUTED_WORK_QUEUE_H
 #include <mpi.h>
 #include <utility>
-#include "types.h"
-#include "stop_token.h"
-#include "work_queue_impl.h"
+#include "libdistributed_types.h"
+#include "libdistributed_stop_token.h"
+#include "libdistributed_work_queue_impl.h"
 
 /**
  * \file
@@ -88,3 +90,4 @@ void work_queue (
 
 }
 }
+#endif

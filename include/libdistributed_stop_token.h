@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBDISTRIBUTED_STOP_TOKEN_H
+#define LIBDISTRIBUTED_STOP_TOKEN_H
 
 /**
  * \file
@@ -32,3 +33,5 @@ class StopToken {
 
 }
 }
+
+#endif

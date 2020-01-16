@@ -3,7 +3,7 @@
 #include <type_traits>
 #include <mpi.h>
 
-#include "stop_token.h"
+#include "libdistributed_stop_token.h"
 
 namespace distributed {
 namespace queue {
@@ -175,11 +175,12 @@ worker_send(MPI_Comm comm, MPI_Datatype response_dtype, IterableType iterable)
   auto value = *begin;
   MPI_Request mpi_request;
   for (; begin != end; ++begin) {
+    value = *begin;
     MPI_Isend(&value, 1, response_dtype, ROOT, (int)worker_status::more, comm,
               &mpi_request);
     MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
   }
-  MPI_Isend(value, 1, response_dtype, ROOT, (int)worker_status::done, comm, &mpi_request);
+  MPI_Isend(&value, 1, response_dtype, ROOT, (int)worker_status::done, comm, &mpi_request);
   MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
 }
 

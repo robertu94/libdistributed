@@ -1,33 +1,6 @@
-#include <iostream>
-#include <string>
 #include "mpi.h"
-#include <unistd.h>
 #include "gtest/gtest.h"
 
-#include <execinfo.h>
-
-void failing_error_handler(MPI_Comm* comm, int* ec, ...) {
-  
-  int rank, size;
-  MPI_Comm_size(*comm, &size);
-  MPI_Comm_rank(*comm, &rank);
-  int nptrs;
-  void* backtrace_buffer[100];
-  char** backtrace_strings;
-  nptrs = backtrace(backtrace_buffer, 100);
-  backtrace_strings = backtrace_symbols(backtrace_buffer, nptrs);
-
-  for (int i = 0; i < nptrs; ++i) {
-    printf("BT %d/%d: [%d] %s\n", rank, size, i, backtrace_strings[i]);
-  }
-  free(backtrace_strings);
-
-
-  int length;
-  std::string s(MPI_MAX_ERROR_STRING, '\0');
-  MPI_Error_string(*ec, &s[0], &length);
-  ADD_FAILURE() << s.c_str();
-}
 
 int main(int argc, char *argv[])
 {

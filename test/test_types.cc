@@ -1,7 +1,7 @@
 #include <tuple>
 #include <vector>
 #include "gtest/gtest.h"
-#include "types.h"
+#include "libdistributed_types.h"
 
 using namespace distributed::types;
 

@@ -6,7 +6,7 @@
 #include <chrono>
 #include "gtest/gtest.h"
 
-#include "work_queue.h"
+#include "libdistributed_work_queue.h"
 
 using namespace distributed::queue;
 using namespace std::literals::chrono_literals;
@@ -44,6 +44,46 @@ TEST(test_work_queue, single_no_stop) {
   }
 }
 
+
+TEST(test_work_queue, multi_no_stop) {
+  using request = std::tuple<int>;
+  using response = std::tuple<int, double>;
+  std::vector<request> tasks;
+  tasks.reserve(5);
+  for (int i = 0; i < 5; ++i) {
+    tasks.emplace_back(i);
+  }
+  std::vector<response> results;
+
+  work_queue(
+      MPI_COMM_WORLD,
+      std::begin(tasks),
+      std::end(tasks),
+      [](request req) {
+        std::vector<response> responses;
+        responses.reserve(5);
+        int rank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        auto req_value = std::get<0>(req);
+        for (int i = 0; i < 5; ++i) {
+          responses.emplace_back(req_value, std::pow(req_value, 2));
+        }
+        return responses;
+      },
+      [&](response res) {
+        auto [i,d] = res;
+        results.push_back(res);
+      }
+      );
+
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  if(rank == 0) {
+    EXPECT_EQ(results.size(), 25);
+  } else {
+    EXPECT_EQ(results.size(), 0);
+  }
+}
 namespace std{
 inline void PrintTo(const std::chrono::milliseconds& duration, ::std::ostream * os) {
   *os << duration.count() << "ms";
