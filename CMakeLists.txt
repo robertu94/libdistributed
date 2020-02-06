@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(libdistributed VERSION "0.0.3" LANGUAGES CXX)
+project(libdistributed VERSION "0.0.4" LANGUAGES CXX)
 
 #correct was to set a default build type
 # https://blog.kitware.com/cmake-and-the-default-build-type/
@@ -26,12 +26,13 @@ include(GNUInstallDirs)
 
 find_package(MPI COMPONENTS CXX)
 
+option(BUILD_SHARED_LIBS "BUILD SHARED LIBRARIES" ON)
 add_library(libdistributed
   #core features
     src/work_queue.cc
 
   #public headers
-    include/libdistributed_stop_token.h
+        include/libdistributed_task_manager.h
     include/libdistributed_types.h
     include/libdistributed_work_queue.h
 

@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
 
   queue::work_queue(
     MPI_COMM_WORLD, std::begin(tasks), std::end(tasks),
-    [](request req, queue::StopToken& token) {
+    [](request req, queue::TaskManager<request>& token) {
       //code in this lambda expression gets run once for each task
       auto [i] = req;
       std::cout << "worker got i=" << i << std::endl;

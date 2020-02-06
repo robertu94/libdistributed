@@ -3,7 +3,7 @@
 
 /**
  * \file
- * \brief distributed cancellation request token for `work_queue`
+ * \brief  Manage a running `work_queue`
  */
 
 namespace distributed {
@@ -13,9 +13,10 @@ namespace queue {
  * A distributed token which can be used to request stopping computation on a
  * work_queue
  */
-class StopToken {
+template <class RequestType>
+class TaskManager {
   public:
-  virtual ~StopToken()=default;
+  virtual ~TaskManager()=default;
   /**
    * \returns true if a stop has been requested and recieved by this rank
    */
@@ -29,6 +30,13 @@ class StopToken {
    * see if they should attempt to terminate early.
    */
   virtual void request_stop()=0;
+
+  /**
+   * Ask the manager to queue a new request
+   *
+   * \param[in] request the request that you would like the master to enqueue
+   */
+  virtual void push(RequestType const& request)=0;
 };
 
 }

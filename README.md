@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
 
   queue::work_queue(
     MPI_COMM_WORLD, std::begin(tasks), std::end(tasks),
-    [](request req, queue::StopToken& token) {
+    [](request req, queue::TaskManager<request>& manager) {
       //code in this lambda expression gets run once for each task
       auto [i] = req;
       std::cout << "worker got i=" << i << std::endl;
@@ -46,11 +46,11 @@ int main(int argc, char *argv[])
       // if the request is request 0, request termination
       // otherwise sleep for 150ms in 50ms increments
       if (i != 0) {
-        for (int j = 0; j < 3 && !token.stop_requested(); ++j) {
+        for (int j = 0; j < 3 && !manager.stop_requested(); ++j) {
           std::this_thread::sleep_for(50ms);
         }
       } else {
-        token.request_stop();
+        manager.request_stop();
       }
 
       return std::make_tuple(i, std::pow(i, 2));
@@ -76,12 +76,13 @@ int main(int argc, char *argv[])
 
 ## Getting Started
 
-After skimming the example, LibDistributed has a few major types that you will need to use:
+After skimming the example, LibDistributed has a few major headers that you will need to use:
 
-Type                     | Use 
--------------------------|----------------------------------------------------------------------
-`work_queue.h`           | A distributed work queue with cancellation support
-`types.h`                | Uses templates to create `MPI_Datatype`s
+Type                            | Use 
+--------------------------------|----------------------------------------------------------------------
+`libdistributed_work_queue.h`   | A distributed work queue with cancellation support
+`libdistributed_task_manager.h` | The manager used to control the work queue
+`libdistributed_types.h`        | Uses templates to create `MPI_Datatype`s
 
 ## Dependencies
 

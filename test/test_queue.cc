@@ -107,7 +107,7 @@ TEST(test_work_queue, single_withstop) {
       MPI_COMM_WORLD,
       std::begin(tasks),
       std::end(tasks),
-      [](request req, StopToken& token) {
+      [](request req, TaskManager<request>& token) {
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         auto req_value = std::get<0>(req);
@@ -130,4 +130,74 @@ TEST(test_work_queue, single_withstop) {
   std::chrono::milliseconds const duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-start_time);
   std::chrono::milliseconds const time_limit = 170ms;
   EXPECT_LE(duration, time_limit);
+}
+
+TEST(test_work_queue, single_dynamic_worker) {
+  using request = std::tuple<int>;
+  using response = std::tuple<int, double>;
+  int size;
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  std::vector<request> tasks(size, 1);
+  std::vector<response> results;
+
+  auto start_time = std::chrono::high_resolution_clock::now();
+
+  int executions = 0;
+  int total_executions = 0;
+
+  work_queue(
+      MPI_COMM_WORLD,
+      std::begin(tasks),
+      std::end(tasks),
+      [&executions](request req, TaskManager<request>& token) {
+        auto req_value = std::get<0>(req);
+        ++executions;
+        if(req_value == 1) {
+          token.push(2);
+        }
+        return std::make_tuple(req_value, std::pow(req_value, 2));
+      },
+      [&](response res) {
+        auto [i,d] = res;
+        results.push_back(res);
+      }
+      );
+
+  MPI_Allreduce(&executions, &total_executions, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  EXPECT_EQ(total_executions, size*2);
+}
+
+TEST(test_work_queue, single_dynamic_master) {
+  using request = std::tuple<int>;
+  using response = std::tuple<int, double>;
+  int size;
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  std::vector<request> tasks(size, 1);
+  std::vector<response> results;
+
+  auto start_time = std::chrono::high_resolution_clock::now();
+
+  int executions = 0;
+  int total_executions = 0;
+
+  work_queue(
+      MPI_COMM_WORLD,
+      std::begin(tasks),
+      std::end(tasks),
+      [&executions](request req) {
+        auto req_value = std::get<0>(req);
+        ++executions;
+        return std::make_tuple(req_value, std::pow(req_value, 2));
+      },
+      [&](response res, TaskManager<request>& token) {
+        auto [i,d] = res;
+        if(i == 1) {
+          token.push(2);
+        }
+        results.push_back(res);
+      }
+      );
+
+  MPI_Allreduce(&executions, &total_executions, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  EXPECT_EQ(total_executions, size*2);
 }

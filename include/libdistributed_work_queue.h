@@ -3,7 +3,7 @@
 #include <mpi.h>
 #include <utility>
 #include "libdistributed_types.h"
-#include "libdistributed_stop_token.h"
+#include "libdistributed_task_manager.h"
 #include "libdistributed_work_queue_impl.h"
 
 /**
@@ -25,13 +25,13 @@ namespace queue {
    *
    * 1. `ResponseType worker_fn(RequestType)`
    * 2. `Container<ResponseType> worker_fn(RequestType)`
-   * 3. `ResponseType worker_fn(RequestType, StopToken&)`
-   * 4. `Container<ResponseType> worker_fn(RequestType, StopToken&)`
+   * 3. `ResponseType worker_fn(RequestType, TaskManager<RequestType>&)`
+   * 4. `Container<ResponseType> worker_fn(RequestType, TaskManager<RequestType>&)`
    *
-   * The versions that take a `StopToken&`, pass a subclass of StopToken which
-   * allows the caller to request that the remaining tasks in the queue be
-   * canceled and that other tasks that are currently running be cooperatively
-   * notified that they can stop.
+   * The versions that take a `TaskManager<RequestType>&`, pass a subclass of
+   * TaskManager which allows the caller to request that the remaining tasks in
+   * the queue be canceled and that other tasks that are currently running be
+   * cooperatively notified that they can stop.
    *
    * The versions that return a `Container<ResponseType>` -- a type that
    * conforms to the Container named requirement with element type ResponseType.
@@ -40,14 +40,14 @@ namespace queue {
    * `master_fn`  can have one of two possible signatures:
    *
    * 1. void master_fn(ResponseType)
-   * 2. void master_fn(ResponseType, StopToken&)
+   * 2. void master_fn(ResponseType, TaskManager<RequestType>&)
    *
-   * The version that takes a `StopToken&`, passes a subclass of StopToken which
-   * allows the caller to request that the remaining tasks in the queue be
-   * canceled and that other tasks that are currently running be cooperatively
-   * notified that they can stop.
+   * The version that takes a `TaskManager<RequestType>&`, passes a subclass of
+   * `TaskManager<RequestType>&` which allows the caller to request that the
+   * remaining tasks in the queue be canceled and that other tasks that are
+   * currently running be cooperatively notified that they can stop.
    *
-   * \see StopToken for details on the semantics about cancellation
+   * \see TaskManager<RequestType> for details on the semantics about cancellation
    */
 template <class TaskForwardIt, class WorkerFunction, class MasterFunction>
 void work_queue (
@@ -69,7 +69,7 @@ void work_queue (
       impl::maybe_stop_token(
         worker_fn,
         std::declval<RequestType>(),
-        std::declval<StopToken&>()
+        std::declval<TaskManager<RequestType>&>()
         )
       )>::type;
 

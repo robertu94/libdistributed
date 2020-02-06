@@ -3,7 +3,7 @@
 #include <type_traits>
 #include <mpi.h>
 
-#include "libdistributed_stop_token.h"
+#include "libdistributed_task_manager.h"
 
 namespace distributed {
 namespace queue {
@@ -41,16 +41,21 @@ constexpr int ROOT = 0;
 enum class worker_status: int {
   done = 1,
   more = 2,
-  cancel = 3
+  cancel = 3,
+  new_task = 4
 };
 
 
-class WorkerStopToken : public StopToken
+template <class RequestType, class ResponseType>
+class WorkerTaskManager : public TaskManager<RequestType>
 {
 public:
-  WorkerStopToken(MPI_Comm comm, MPI_Request request)
-    : comm(comm)
+  WorkerTaskManager(MPI_Comm comm, MPI_Request request, MPI_Datatype request_dtype, MPI_Datatype response_dtype)
+    : TaskManager<RequestType>()
+    , comm(comm)
     , stop_request(request)
+    , request_type(request_dtype)
+    , response_type(response_dtype)
     , flag(0)
   {}
 
@@ -70,20 +75,42 @@ public:
     MPI_Wait(&request, MPI_STATUS_IGNORE);
   }
 
+  void push(RequestType const& request) override {
+    ResponseType response;
+    MPI_Request mpi_request;
+    //let master know a new task is coming
+    MPI_Isend(&response, 1, response_type, 0, (int)worker_status::new_task, comm, &mpi_request);
+    MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
+
+    //send the new request to the master
+    MPI_Isend(&request, 1, request_type, 0, (int)worker_status::new_task, comm, &mpi_request);
+    MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
+
+  }
+
   private:
   MPI_Comm comm;
   MPI_Request stop_request;
+  MPI_Datatype request_type;
+  MPI_Datatype response_type;
   int flag;
 };
 
-class MasterStopToken : public StopToken
+template <class RequestType>
+class MasterTaskManager : public TaskManager<RequestType>
 {
 public:
-  MasterStopToken(MPI_Comm comm)
-    : StopToken(),
+  template <class TaskIt>
+  MasterTaskManager(MPI_Comm comm, TaskIt begin, TaskIt end)
+    : TaskManager<RequestType>(),
       comm(comm),
       is_stop_requested(0)
-  {}
+  {
+       while(begin != end) {
+        requests.emplace(*begin);
+         ++begin;
+       }
+  }
 
   bool stop_requested() override {
     return is_stop_requested == 1;
@@ -96,9 +123,30 @@ public:
     MPI_Wait(&request, MPI_STATUS_IGNORE);
   }
 
+  void push(RequestType const& request) override {
+    requests.emplace(request);
+  }
+
+  void pop() {
+    requests.pop();
+  }
+
+  RequestType const& front() const {
+    return requests.front();
+  }
+
+  RequestType& front() {
+    return requests.front();
+  }
+
+  bool empty() const {
+    return requests.empty();
+  }
+
   private:
   MPI_Comm comm;
   int is_stop_requested;
+  std::queue<RequestType> requests;
 };
 
 template <class RequestType, class ResponseType, class TaskForwardIt, class Function>
@@ -112,18 +160,20 @@ void master(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
       workers.push(i);
     }
 
-    MasterStopToken stop_token(comm);
+    //create task queue
+
+    MasterTaskManager<RequestType> task_manager(comm, tasks_begin, tasks_end);
 
     int outstanding = 0;
-    while((tasks_begin != tasks_end and !stop_token.stop_requested()) or outstanding > 0) {
+    while((!task_manager.empty() and !task_manager.stop_requested()) or outstanding > 0) {
 
-      while(tasks_begin != tasks_end and !stop_token.stop_requested() and !workers.empty()) {
+      while(!task_manager.empty() and !task_manager.stop_requested() and !workers.empty()) {
         int worker_id = workers.front();
         ++outstanding;
         workers.pop();
 
-        RequestType request = *tasks_begin;
-        ++tasks_begin;
+        RequestType request = std::move(task_manager.front());
+        task_manager.pop();
 
         MPI_Request mpi_request;
         MPI_Isend(&request, 1, request_dtype, worker_id, (int)worker_status::more, comm, &mpi_request);
@@ -138,19 +188,26 @@ void master(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
       MPI_Wait(&mpi_response, &response_status);
       switch(worker_status(response_status.MPI_TAG)) {
         case worker_status::more:
-          maybe_stop_token(master_fn, response, stop_token);
+          maybe_stop_token(master_fn, response, task_manager);
           break;
         case worker_status::done:
           workers.push(response_status.MPI_SOURCE);
           outstanding--;
           break;
         case worker_status::cancel:
-          stop_token.request_stop();
+          task_manager.request_stop();
+          break;
+        case worker_status::new_task:
+          RequestType request;
+          MPI_Request mpi_request;
+          MPI_Irecv(&request, 1, request_dtype, response_status.MPI_SOURCE, (int)worker_status::new_task, comm, &mpi_request);
+          MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
+          task_manager.push(request);
           break;
       }
     }
     
-    if(not stop_token.stop_requested()) stop_token.request_stop();
+    if(not task_manager.stop_requested()) task_manager.request_stop();
 
     while(not workers.empty()) {
       int worker_id = workers.front();
@@ -198,38 +255,38 @@ worker_send(MPI_Comm comm,  MPI_Datatype response_dtype, ValueType value)
     MPI_Wait(&request, MPI_STATUS_IGNORE);
 }
 
-template <typename Function, class Message,
+template <typename Function, class Message, class RequestType,
           typename = void>
 struct takes_stop_token : std::false_type
 {};
 
-template <typename Function, class Message>
+template <typename Function, class Message, class RequestType>
 struct takes_stop_token<
-  Function, Message,
+  Function, Message, RequestType,
   std::void_t<decltype(std::declval<Function>()(
-    std::declval<Message>(), std::declval<StopToken&>()))>> : std::true_type
+    std::declval<Message>(), std::declval<TaskManager<RequestType>&>()))>> : std::true_type
 {};
 
-template <class Function, class Message, class Enable = void>
+template <class Function, class Message, class RequestType, class Enable = void>
 struct maybe_stop_token_impl {
-    static auto call(Function f, Message m, StopToken&) {
+    static auto call(Function f, Message m, TaskManager<RequestType>&) {
       return f(m);
     }
 };
 
 
-template <class Function, class Message>
-struct maybe_stop_token_impl<Function, Message, 
-  typename std::enable_if_t<takes_stop_token<Function,Message>::value>> {
-    static auto call(Function f, Message m, StopToken& s) {
+template <class Function, class Message, class RequestType>
+struct maybe_stop_token_impl<Function, Message, RequestType,
+  typename std::enable_if_t<takes_stop_token<Function,Message, RequestType>::value>> {
+    static auto call(Function f, Message m, TaskManager<RequestType>& s) {
       return f(m,s);
     }
 };
 
-template <class Function, class Message>
-auto maybe_stop_token(Function f, Message m, StopToken& s)
+template <class Function, class Message, class RequestType>
+auto maybe_stop_token(Function f, Message m, TaskManager<RequestType>& s)
 {
-  return maybe_stop_token_impl<Function, Message>::call(f, m, s);
+  return maybe_stop_token_impl<Function, Message, RequestType>::call(f, m, s);
 }
 
 template <class RequestType, class ResponseType, class Function>
@@ -241,7 +298,7 @@ void worker(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
   int done = 0;
   MPI_Request stop_request;
   MPI_Ibcast(&done, 1, MPI_INT, ROOT, comm, &stop_request);
-  WorkerStopToken stop_token(comm, stop_request);
+  WorkerTaskManager<RequestType, ResponseType> stop_token(comm, stop_request, request_dtype, response_dtype);
 
   bool worker_done = false;
   while(!worker_done) {
