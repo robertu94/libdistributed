@@ -38,6 +38,7 @@ endfunction()
 
 add_mpi_gtest(test_types.cc)
 add_mpi_gtest(test_queue.cc)
+add_mpi_gtest(test_comm.cc)
 
 add_executable(simple_queue simple_queue.cc)
 target_link_libraries(simple_queue PUBLIC libdistributed)

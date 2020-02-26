@@ -1,9 +1,11 @@
 #include <iterator>
 #include <queue>
 #include <type_traits>
+#include <algorithm>
 #include <mpi.h>
 
 #include "libdistributed_task_manager.h"
+#include "libdistributed_comm.h"
 
 namespace distributed {
 namespace queue {
@@ -26,17 +28,6 @@ struct is_iterable<T, std::void_t<decltype(std::declval<T>().begin()),
                                   decltype(std::declval<T>().end())>>
     : std::true_type {};
 
-template <class T, class Enable = void>
-struct type_or_value_type {
-  using type = T;
-};
-
-template <class T>
-struct type_or_value_type<T, std::enable_if_t<is_iterable<T>::value>> {
-  using type = typename T::value_type;
-};
-
-
 constexpr int ROOT = 0;
 enum class worker_status: int {
   done = 1,
@@ -50,14 +41,14 @@ template <class RequestType, class ResponseType>
 class WorkerTaskManager : public TaskManager<RequestType>
 {
 public:
-  WorkerTaskManager(MPI_Comm comm, MPI_Request request, MPI_Datatype request_dtype, MPI_Datatype response_dtype)
+  WorkerTaskManager(MPI_Comm comm)
     : TaskManager<RequestType>()
     , comm(comm)
-    , stop_request(request)
-    , request_type(request_dtype)
-    , response_type(response_dtype)
+    , stop_request()
     , flag(0)
-  {}
+  {
+  MPI_Ibcast(&done, 1, MPI_INT, ROOT, comm, &stop_request);
+  }
 
   bool stop_requested() override {
     if(!flag) {
@@ -66,34 +57,33 @@ public:
     return flag;
   }
 
+  void wait_stopped() {
+    if(!flag) {
+      MPI_Wait(&stop_request, MPI_STATUS_IGNORE);
+      flag = true;
+    }
+  }
+
   void request_stop() override {
     int done = 1;
-    int rank;
-    MPI_Comm_rank(comm, &rank);
-    MPI_Request request;
-    MPI_Isend(&done, 1, MPI_INT, 0, (int)worker_status::cancel, comm, &request);
-    MPI_Wait(&request, MPI_STATUS_IGNORE);
+    comm::send(done, ROOT, (int)worker_status::cancel, comm);
   }
 
   void push(RequestType const& request) override {
     ResponseType response;
     MPI_Request mpi_request;
     //let master know a new task is coming
-    MPI_Isend(&response, 1, response_type, 0, (int)worker_status::new_task, comm, &mpi_request);
-    MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
+    comm::send(response, 0, (int)worker_status::new_task, comm);
 
     //send the new request to the master
-    MPI_Isend(&request, 1, request_type, 0, (int)worker_status::new_task, comm, &mpi_request);
-    MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
-
+    comm::send(request, 0, (int)worker_status::new_task, comm);
   }
 
   private:
   MPI_Comm comm;
   MPI_Request stop_request;
-  MPI_Datatype request_type;
-  MPI_Datatype response_type;
   int flag;
+  int done;//used by MPI_Ibcast for syncronization, do not read unless flag==true
 };
 
 template <class RequestType>
@@ -150,7 +140,7 @@ public:
 };
 
 template <class RequestType, class ResponseType, class TaskForwardIt, class Function>
-void master(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dtype, TaskForwardIt tasks_begin, TaskForwardIt tasks_end, Function master_fn)
+void master(MPI_Comm comm, TaskForwardIt tasks_begin, TaskForwardIt tasks_end, Function master_fn)
 {
     //create worker queue
     int size;
@@ -175,22 +165,19 @@ void master(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
         RequestType request = std::move(task_manager.front());
         task_manager.pop();
 
-        MPI_Request mpi_request;
-        MPI_Isend(&request, 1, request_dtype, worker_id, (int)worker_status::more, comm, &mpi_request);
-        MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
+        comm::send(request, worker_id, (int)worker_status::more, comm);
       }
 
       MPI_Status response_status;
-      MPI_Request mpi_response;
       ResponseType response;
 
-      MPI_Irecv(&response, 1, response_dtype, MPI_ANY_SOURCE, MPI_ANY_TAG, comm, &mpi_response);
-      MPI_Wait(&mpi_response, &response_status);
+      comm::recv(response, MPI_ANY_SOURCE, MPI_ANY_TAG, comm, &response_status);
       switch(worker_status(response_status.MPI_TAG)) {
         case worker_status::more:
-          maybe_stop_token(master_fn, response, task_manager);
+          MPI_Abort(comm, 3);
           break;
         case worker_status::done:
+          maybe_stop_token(master_fn, response, task_manager);
           workers.push(response_status.MPI_SOURCE);
           outstanding--;
           break;
@@ -199,9 +186,7 @@ void master(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
           break;
         case worker_status::new_task:
           RequestType request;
-          MPI_Request mpi_request;
-          MPI_Irecv(&request, 1, request_dtype, response_status.MPI_SOURCE, (int)worker_status::new_task, comm, &mpi_request);
-          MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
+          comm::recv(request, response_status.MPI_SOURCE, (int)worker_status::new_task, comm);
           task_manager.push(request);
           break;
       }
@@ -214,45 +199,9 @@ void master(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
       workers.pop();
 
       RequestType request;
-      MPI_Request mpi_request;
-      MPI_Isend(&request, 1, request_dtype, worker_id, (int)worker_status::done, comm, &mpi_request);
-      MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
+      comm::send(request, worker_id, (int)worker_status::done, comm);
     }
 
-}
-
-template <class IterableType>
-typename std::enable_if<is_iterable<IterableType>::value, void>::type 
-worker_send(MPI_Comm comm, MPI_Datatype response_dtype, IterableType iterable)
-{
-  int rank;
-  MPI_Comm_rank(comm, &rank);
-  auto begin = std::begin(iterable);
-  auto end = std::end(iterable);
-  auto value = *begin;
-  MPI_Request mpi_request;
-  for (; begin != end; ++begin) {
-    value = *begin;
-    MPI_Isend(&value, 1, response_dtype, ROOT, (int)worker_status::more, comm,
-              &mpi_request);
-    MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
-  }
-  MPI_Isend(&value, 1, response_dtype, ROOT, (int)worker_status::done, comm, &mpi_request);
-  MPI_Wait(&mpi_request, MPI_STATUS_IGNORE);
-}
-
-template <class ValueType>
-typename std::enable_if<!is_iterable<ValueType>::value, void>::type 
-worker_send(MPI_Comm comm,  MPI_Datatype response_dtype, ValueType value)
-{
-    int rank;
-    MPI_Comm_rank(comm, &rank);
-    MPI_Request request;
-    MPI_Isend(&value, 1, response_dtype, ROOT, (int)worker_status::more, comm, &request);
-    MPI_Wait(&request, MPI_STATUS_IGNORE);
-
-    MPI_Isend(&value, 1, response_dtype, ROOT, (int)worker_status::done, comm, &request);
-    MPI_Wait(&request, MPI_STATUS_IGNORE);
 }
 
 template <typename Function, class Message, class RequestType,
@@ -290,23 +239,18 @@ auto maybe_stop_token(Function f, Message m, TaskManager<RequestType>& s)
 }
 
 template <class RequestType, class ResponseType, class Function>
-void worker(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dtype, Function worker_fn)
+void worker(MPI_Comm comm, Function worker_fn)
 {
 
   int rank;
   MPI_Comm_rank(comm, &rank);
-  int done = 0;
-  MPI_Request stop_request;
-  MPI_Ibcast(&done, 1, MPI_INT, ROOT, comm, &stop_request);
-  WorkerTaskManager<RequestType, ResponseType> stop_token(comm, stop_request, request_dtype, response_dtype);
+  WorkerTaskManager<RequestType, ResponseType> stop_token(comm);
 
   bool worker_done = false;
   while(!worker_done) {
-    MPI_Request task_request;
     MPI_Status task_status;
     RequestType request;
-    MPI_Irecv(&request, 1, request_dtype, ROOT, MPI_ANY_TAG, comm, &task_request);
-    MPI_Wait(&task_request, &task_status);
+    comm::recv(request, ROOT, MPI_ANY_TAG, comm, &task_status);
 
     switch(worker_status(task_status.MPI_TAG)) {
       case worker_status::done:
@@ -315,17 +259,75 @@ void worker(MPI_Comm comm, MPI_Datatype request_dtype, MPI_Datatype response_dty
       case worker_status::more:
         {
           auto response = maybe_stop_token(worker_fn, request, stop_token);
-          worker_send(comm, response_dtype, response);
+          comm::send(response, ROOT, (int)worker_status::done, comm);
         }
         break;
       case worker_status::cancel:
+      case worker_status::new_task:
         MPI_Abort(comm, 2);
         break;
     }
   }
 
-  if(!stop_token.stop_requested()) {
-    MPI_Wait(&stop_request, MPI_STATUS_IGNORE);
+  stop_token.wait_stopped();
+}
+
+template <class RequestType>
+class NoWorkersTaskManager: public TaskManager<RequestType> {
+  public:
+
+  template<class TaskForwardIt>
+  NoWorkersTaskManager(TaskForwardIt tasks_begin, TaskForwardIt tasks_end)
+  {
+    for(; tasks_begin != tasks_end; ++tasks_begin) {
+      requests.emplace(*tasks_begin);
+    }
+  }
+
+  bool stop_requested() override {
+    return is_stop_requested;
+  }
+
+  void request_stop() override {
+    is_stop_requested = true;
+  }
+
+  void push(RequestType const& request) override {
+    requests.push(request);
+  }
+
+  void pop() {
+    requests.pop();
+  }
+
+  RequestType const& front() const {
+    return requests.front();
+  }
+
+  RequestType& front() {
+    return requests.front();
+  }
+
+  bool empty() const {
+    return requests.empty();
+  }
+
+
+  private:
+  bool is_stop_requested = false;
+  std::queue<RequestType> requests{};
+};
+
+template <class RequestType, class ResponseType, class TaskForwardIt, class WorkerFn, class MasterFn>
+void no_workers(TaskForwardIt tasks_begin, TaskForwardIt tasks_end, MasterFn master_fn, WorkerFn worker_fn) {
+  NoWorkersTaskManager<RequestType> task_manager(tasks_begin, tasks_end);
+
+  while(!task_manager.empty() && !task_manager.stop_requested()) {
+    RequestType task = task_manager.front();
+    task_manager.pop();
+
+    auto response = maybe_stop_token(worker_fn, task, task_manager);
+    maybe_stop_token(master_fn, response, task_manager);
   }
 }
 

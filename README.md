@@ -14,7 +14,7 @@ Here is a minimal example with error handling of how to use LibDistributed.
 #include <cmath>
 
 #include <mpi.h>
-#include <work_queue.h>
+#include <libdistributed_work_queue.h>
 
 using namespace std::literals::chrono_literals;
 namespace queue = distributed::queue;
@@ -83,6 +83,7 @@ Type                            | Use
 `libdistributed_work_queue.h`   | A distributed work queue with cancellation support
 `libdistributed_task_manager.h` | The manager used to control the work queue
 `libdistributed_types.h`        | Uses templates to create `MPI_Datatype`s
+`libdistributed_comm.h`         | Uses templates to make it easier to write sends, recvs, and bcasts
 
 ## Dependencies
 

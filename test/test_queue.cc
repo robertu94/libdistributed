@@ -14,6 +14,7 @@ TEST(test_work_queue, single_no_stop) {
   using request = std::tuple<int>;
   using response = std::tuple<int, double>;
   std::vector<request> tasks;
+  tasks.reserve(5);
   for (int i = 0; i < 5; ++i) {
     tasks.emplace_back(i);
   }
@@ -70,9 +71,10 @@ TEST(test_work_queue, multi_no_stop) {
         }
         return responses;
       },
-      [&](response res) {
-        auto [i,d] = res;
-        results.push_back(res);
+      [&](std::vector<response>const& res) {
+        for (auto const& element : res) {
+          results.push_back(element);
+        }
       }
       );
 
