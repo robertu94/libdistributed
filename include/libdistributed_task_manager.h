@@ -9,14 +9,10 @@
 namespace distributed {
 namespace queue {
 
-/**
- * A distributed token which can be used to request stopping computation on a
- * work_queue
- */
-template <class RequestType>
-class TaskManager {
+class StopToken {
   public:
-  virtual ~TaskManager()=default;
+  virtual ~StopToken()=default;
+
   /**
    * \returns true if a stop has been requested and recieved by this rank
    */
@@ -31,6 +27,15 @@ class TaskManager {
    */
   virtual void request_stop()=0;
 
+};
+/**
+ * A distributed token which can be used to request stopping computation on a
+ * work_queue
+ */
+template <class RequestType>
+class TaskManager: public StopToken {
+  public:
+  virtual ~TaskManager()=default;
   /**
    * Ask the manager to queue a new request
    *
