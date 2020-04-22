@@ -9,6 +9,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <map>
 #include <mpi.h>
 
 /**
