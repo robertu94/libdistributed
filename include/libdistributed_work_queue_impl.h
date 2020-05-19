@@ -65,7 +65,7 @@ public:
   }
 
   void request_stop() override {
-    int done = 1;
+    ResponseType done{};
     comm::send(done, ROOT, (int)worker_status::cancel, comm);
   }
 
@@ -107,10 +107,13 @@ public:
   }
 
   void request_stop() override {
-    MPI_Request request;
-    is_stop_requested = 1;
-    MPI_Ibcast(&is_stop_requested, 1, MPI_INT, ROOT, comm, &request);
-    MPI_Wait(&request, MPI_STATUS_IGNORE);
+    if(is_stop_requested == 0)
+    {
+      MPI_Request request;
+      is_stop_requested = 1;
+      MPI_Ibcast(&is_stop_requested, 1, MPI_INT, ROOT, comm, &request);
+      MPI_Wait(&request, MPI_STATUS_IGNORE);
+    }
   }
 
   void push(RequestType const& request) override {
