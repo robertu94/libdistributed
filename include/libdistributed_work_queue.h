@@ -4,6 +4,7 @@
 #include <utility>
 #include "libdistributed_types.h"
 #include "libdistributed_task_manager.h"
+#include "libdistributed_work_queue_options.h"
 #include "libdistributed_work_queue_impl.h"
 
 /**
@@ -44,41 +45,58 @@ namespace queue {
    *
    * \see distributed::queue::TaskManager<RequestType> for details on the semantics about cancellation
    */
-template <class TaskForwardIt, class WorkerFunction, class MasterFunction>
+template <class TaskRandomIt, class WorkerFunction, class MasterFunction>
 void work_queue (
-    MPI_Comm comm,
-    TaskForwardIt tasks_begin,
-    TaskForwardIt tasks_end,
+    work_queue_options<typename impl::iterator_to_value_type<TaskRandomIt>::type> const& options,
+    TaskRandomIt tasks_begin,
+    TaskRandomIt tasks_end,
     WorkerFunction worker_fn,
     MasterFunction master_fn
     ) {
   //setup communicator
-  int rank, size;
-  MPI_Comm queue_comm;
-  MPI_Comm_dup(comm, &queue_comm);
-  MPI_Comm_rank(queue_comm, &rank);
-  MPI_Comm_size(queue_comm, &size);
 
-  using RequestType = typename impl::iterator_to_value_type<TaskForwardIt>::type;
+  using RequestType = typename impl::iterator_to_value_type<TaskRandomIt>::type;
   using ResponseType = decltype( impl::maybe_stop_token( worker_fn,
         std::declval<RequestType>(),
-        std::declval<TaskManager<RequestType>&>()
+        std::declval<TaskManager<RequestType, MPI_Comm>&>()
         )
       );
+  
 
-  if(size > 1) {
+  if(options.get_queue_size() > 1) {
+    //create sub-communicators
+    const int rank = options.get_queue_rank();
+    auto groups = options.get_groups();
+    MPI_Comm subcomm;
+    MPI_Comm_split(
+        options.get_native_queue_comm(),
+        groups[rank],
+        rank,
+        &subcomm
+        );
+    int subrank;
+    MPI_Comm_rank(subcomm, &subrank);
+
     //determine the request and response types from the input
-    if(rank == 0) {
-      impl::master<RequestType, ResponseType>(queue_comm, tasks_begin, tasks_end, master_fn);
+    if(options.is_master()) {
+      if(subrank == 0) {
+        impl::master_main<RequestType, ResponseType>(subcomm, tasks_begin, tasks_end, master_fn, options);
+      } else {
+        impl::master_aux<RequestType, ResponseType>(subcomm, master_fn, options);
+      }
     } else {
-      impl::worker<RequestType, ResponseType>(queue_comm, worker_fn);
+      if(subrank == 0) {
+        impl::worker_main<RequestType, ResponseType>(subcomm, worker_fn, options);
+      } else {
+        impl::worker_aux<RequestType, ResponseType>(subcomm, worker_fn, options);
+      }
     }
+    MPI_Comm_free(&subcomm);
 
   } else {
     impl::no_workers<RequestType, ResponseType>(tasks_begin, tasks_end, master_fn, worker_fn);
   }
   comm::serializer::get_type_registry().clear();
-  MPI_Comm_free(&queue_comm);
 }
 
 }

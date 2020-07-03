@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 #include <map>
+#include <string>
 #include <mpi.h>
 
 /**
@@ -724,6 +725,91 @@ struct serializer<std::vector<T>>
     } else {
       for (auto& item : t) {
         ret |= serializer<T>::bcast(item, root, comm);
+      }
+    }
+    return ret;
+  }
+};
+
+/** specialization for serialization for vector types */
+template <class CharT>
+struct serializer<std::basic_string<CharT>>
+{
+  /** is the type serializable using MPI_Datatypes for both the sender and
+   * receiver at compile time?*/
+  using mpi_type = std::false_type;
+  /** \returns a string representing the name of the type */
+  static std::string name() { 
+    std::stringstream n;
+    n << "std::string<" << serializer<CharT>::name() << ">";
+    return n.str();
+  }
+  /** \returns a MPI_Datatype to represent the type if mpi_type is true, else MPI_INT */
+  static MPI_Datatype dtype() { return MPI_INT; }
+  /** 
+   * Sends a data type from one location to another
+   * \param[in] t the data to send
+   * \param[in] dest the MPI rank to send to
+   * \param[in] tag the MPI tag to send to
+   * \param[in] comm the MPI_Comm to send to
+   * \returns an error code from the underlying send */
+  static int send(std::basic_string<CharT> const& t, int dest, int tag, MPI_Comm comm)
+  {
+    int ret = 0;
+    size_t size = t.size();
+    ret = MPI_Send(&size, 1, mpi_size_t(), dest, tag, comm);
+    if(serializer<CharT>::mpi_type::value) {
+      return MPI_Send(&t.front(), t.size(), serializer<CharT>::dtype(), dest, tag, comm);
+    } else { 
+      for (auto const& item : t) {
+        ret |= serializer<CharT>::send(item, dest, tag, comm);
+      }
+    }
+    return ret;
+  }
+  /** 
+   * Recv a data type from another location
+   * \param[in] t the data to recv from
+   * \param[in] source the MPI rank to recv from
+   * \param[in] tag the MPI tag to recv from
+   * \param[in] comm the MPI_Comm to recv from
+   * \param[in] status the MPI_Status to recv from
+   * \returns an error code from the underlying recv */
+  static int recv(std::basic_string<CharT>& t, int source, int tag, MPI_Comm comm,
+                  MPI_Status* status)
+  {
+    MPI_Status alt_status;
+    if(status == MPI_STATUS_IGNORE) status = &alt_status;
+    size_t size, ret=0;
+    ret = MPI_Recv(&size, 1, mpi_size_t(), source, tag, comm, status);
+    t.resize(size);
+
+    if (serializer<CharT>::mpi_type::value) {
+      return MPI_Recv(&t.front(), t.size(), serializer<CharT>::dtype(), status->MPI_SOURCE, status->MPI_TAG, comm, status);
+    } else {
+      for (auto& item : t) {
+        ret |= serializer<CharT>::recv(item, status->MPI_SOURCE, status->MPI_TAG, comm, status);
+      }
+    }
+    return ret;
+  }
+
+  /** 
+   * Broadcast a data type from another location
+   * \param[in] t the data to broadcast from
+   * \param[in] root the MPI rank to broadcast from
+   * \param[in] comm the MPI_Comm to broadcast from
+   * \returns an error code from the underlying MPI_Bcast(s) */
+  static int bcast(std::basic_string<CharT>& t, int root, MPI_Comm comm)
+  {
+    size_t size = t.size(), ret=0;
+    ret = MPI_Bcast(&size, 1, mpi_size_t(), root, comm);
+    t.resize(size);
+    if (serializer<CharT>::mpi_type::value) {
+      return MPI_Bcast(&t.front(), t.size(), serializer<CharT>::dtype(), root, comm);
+    } else {
+      for (auto& item : t) {
+        ret |= serializer<CharT>::bcast(item, root, comm);
       }
     }
     return ret;

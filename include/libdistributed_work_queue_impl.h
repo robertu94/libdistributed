@@ -1,10 +1,12 @@
 #include <iterator>
 #include <queue>
+#include <set>
 #include <type_traits>
 #include <algorithm>
 #include <mpi.h>
 
 #include "libdistributed_task_manager.h"
+#include "libdistributed_work_queue_options.h"
 #include "libdistributed_comm.h"
 
 namespace distributed {
@@ -28,7 +30,6 @@ struct is_iterable<T, std::void_t<decltype(std::declval<T>().begin()),
                                   decltype(std::declval<T>().end())>>
     : std::true_type {};
 
-constexpr int ROOT = 0;
 enum class worker_status: int {
   done = 1,
   more = 2,
@@ -38,16 +39,18 @@ enum class worker_status: int {
 
 
 template <class RequestType, class ResponseType>
-class WorkerTaskManager : public TaskManager<RequestType>
+class WorkerTaskManager : public TaskManager<RequestType, MPI_Comm>
 {
 public:
-  WorkerTaskManager(MPI_Comm comm)
-    : TaskManager<RequestType>()
-    , comm(comm)
+  WorkerTaskManager(MPI_Comm subcomm, work_queue_options<RequestType> const& options)
+    : TaskManager<RequestType, MPI_Comm>()
+    , queue_comm(options.get_native_queue_comm())
+    , subcomm(subcomm)
     , stop_request()
     , flag(0)
+    , ROOT(options.get_root())
   {
-  MPI_Ibcast(&done, 1, MPI_INT, ROOT, comm, &stop_request);
+    MPI_Ibcast(&done, 1, MPI_INT, ROOT, queue_comm, &stop_request);
   }
 
   bool stop_requested() override {
@@ -66,35 +69,42 @@ public:
 
   void request_stop() override {
     ResponseType done{};
-    comm::send(done, ROOT, (int)worker_status::cancel, comm);
+    comm::send(done, ROOT, (int)worker_status::cancel, queue_comm);
   }
 
   void push(RequestType const& request) override {
     ResponseType response;
     MPI_Request mpi_request;
     //let master know a new task is coming
-    comm::send(response, 0, (int)worker_status::new_task, comm);
+    comm::send(response, 0, (int)worker_status::new_task, queue_comm);
 
     //send the new request to the master
-    comm::send(request, 0, (int)worker_status::new_task, comm);
+    comm::send(request, 0, (int)worker_status::new_task, queue_comm);
+  }
+
+  MPI_Comm get_subcommunicator() override {
+    return subcomm;
   }
 
   private:
-  MPI_Comm comm;
+  MPI_Comm queue_comm, subcomm;
   MPI_Request stop_request;
   int flag;
   int done;//used by MPI_Ibcast for syncronization, do not read unless flag==true
+  const int ROOT;
 };
 
 template <class RequestType>
-class MasterTaskManager : public TaskManager<RequestType>
+class MasterTaskManager : public TaskManager<RequestType, MPI_Comm>
 {
 public:
   template <class TaskIt>
-  MasterTaskManager(MPI_Comm comm, TaskIt begin, TaskIt end)
-    : TaskManager<RequestType>(),
+  MasterTaskManager(MPI_Comm comm, MPI_Comm subcomm, TaskIt begin, TaskIt end, work_queue_options<RequestType> const& options)
+    : TaskManager<RequestType, MPI_Comm>(),
       comm(comm),
-      is_stop_requested(0)
+      subcomm(subcomm),
+      is_stop_requested(0),
+      ROOT(options.get_root())
   {
        while(begin != end) {
         requests.emplace(*begin);
@@ -136,31 +146,61 @@ public:
     return requests.empty();
   }
 
+  MPI_Comm get_subcommunicator() override {
+    return subcomm;
+  }
+
+  void recv_tasks() {
+    int num_has_tasks = 0;
+    int stop_requested_flag = 0;
+    int ignored = 0;
+    MPI_Reduce(&ignored, &stop_requested_flag, 1, MPI_INT, MPI_MAX, 0, subcomm);
+    if(stop_requested_flag) {
+      request_stop();
+    }
+    MPI_Reduce(&ignored, &num_has_tasks, 1, MPI_INT, MPI_SUM, 0, subcomm);
+    for (int i = 0; i < num_has_tasks; ++i) {
+      std::vector<RequestType> new_requests;
+      comm::recv(new_requests, MPI_ANY_SOURCE, MPI_ANY_TAG, subcomm, MPI_STATUS_IGNORE);
+      for (auto const& task : new_requests) {
+        requests.push(task);
+      }
+    }
+  }
+
   private:
-  MPI_Comm comm;
+  MPI_Comm comm, subcomm;
   int is_stop_requested;
   std::queue<RequestType> requests;
+  const int ROOT;
 };
 
 template <class RequestType, class ResponseType, class TaskForwardIt, class Function>
-void master(MPI_Comm comm, TaskForwardIt tasks_begin, TaskForwardIt tasks_end, Function master_fn)
+void master_main(MPI_Comm subcom, TaskForwardIt tasks_begin, TaskForwardIt tasks_end, Function master_fn, work_queue_options<RequestType> const& options)
 {
+  MPI_Comm comm = options.get_native_queue_comm();
     //create worker queue
-    int size;
     std::queue<int> workers;
-    MPI_Comm_size(comm, &size);
-    for (int i = 1; i < size; ++i) {
-      workers.push(i);
+    {
+      auto const& groups = options.get_groups();
+      std::set<int> group_ids;
+      for (size_t i = 0; i < groups.size(); ++i) {
+        //if inserted, and not a master process 
+        if(group_ids.insert(groups[i]).second && (not(i == options.get_root() || groups[options.get_root()] == groups[i]))) {
+          workers.push(i);
+        }
+      }
     }
 
     //create task queue
 
-    MasterTaskManager<RequestType> task_manager(comm, tasks_begin, tasks_end);
+    MasterTaskManager<RequestType> task_manager(comm, subcom, tasks_begin, tasks_end, options);
 
     int outstanding = 0;
     while((!task_manager.empty() and !task_manager.stop_requested()) or outstanding > 0) {
 
       while(!task_manager.empty() and !task_manager.stop_requested() and !workers.empty()) {
+        
         int worker_id = workers.front();
         ++outstanding;
         workers.pop();
@@ -180,9 +220,15 @@ void master(MPI_Comm comm, TaskForwardIt tasks_begin, TaskForwardIt tasks_end, F
           MPI_Abort(comm, 3);
           break;
         case worker_status::done:
+          {
+          int not_done = false;
+          comm::bcast(not_done, 0, subcom);
+          comm::bcast(response, 0, subcom);
           maybe_stop_token(master_fn, response, task_manager);
+          task_manager.recv_tasks();
           workers.push(response_status.MPI_SOURCE);
           outstanding--;
+          }
           break;
         case worker_status::cancel:
           task_manager.request_stop();
@@ -204,7 +250,79 @@ void master(MPI_Comm comm, TaskForwardIt tasks_begin, TaskForwardIt tasks_end, F
       RequestType request;
       comm::send(request, worker_id, (int)worker_status::done, comm);
     }
+    {
+      int done = true;
+      comm::bcast(done, 0, subcom);
+    }
 
+}
+
+template <class RequestType, class ResponseType>
+class MasterAuxTaskManager : public TaskManager<RequestType, MPI_Comm>
+{
+  public:
+  MasterAuxTaskManager(MPI_Comm subcomm, work_queue_options<RequestType> const& options):
+    queue_comm(options.get_native_queue_comm()),
+    subcomm(subcomm),
+    stop_request(),
+    flag(0),
+    request_done(0),
+    ROOT(options.get_root())
+  {
+    MPI_Ibcast(&done, 1, MPI_INT, ROOT, queue_comm, &stop_request);
+  }
+
+  void request_stop() override {
+    request_done = 1;
+  }
+
+  bool stop_requested() override {
+    if(!flag) {
+      MPI_Test(&stop_request, &flag, MPI_STATUS_IGNORE);
+    }
+    return flag;
+  }
+
+  void push(RequestType const& request) override {
+    requests.push_back(request);
+  }
+
+  void send_tasks() {
+    int has_tasks = (requests.empty()) ? 0: 1;
+    int ignore=0;
+    MPI_Reduce(&request_done, &ignore, 1, MPI_INT, MPI_MAX, 0, subcomm);
+    MPI_Reduce(&has_tasks, &ignore, 1, MPI_INT, MPI_SUM, 0, subcomm);
+    if(has_tasks) {
+      comm::send(requests, 0, 0, subcomm);
+    }
+    requests.clear();
+  }
+
+  MPI_Comm get_subcommunicator() override {
+    return subcomm;
+  }
+  private:
+  MPI_Comm queue_comm, subcomm;
+  MPI_Request stop_request;
+  std::vector<RequestType> requests;
+  int flag, done, request_done;
+  const int ROOT;
+};
+
+template <class RequestType, class ResponseType, class Function>
+void master_aux(MPI_Comm subcomm, Function master_fn, work_queue_options<RequestType> const& options) {
+  MasterAuxTaskManager<RequestType, ResponseType> task_manager(subcomm, options);
+  ResponseType response;
+
+  int master_done = false;
+  while(!master_done) {
+    comm::bcast(master_done, 0, subcomm);
+    if(!master_done) {
+      comm::bcast(response, 0, subcomm);
+      maybe_stop_token(master_fn, response, task_manager);
+      task_manager.send_tasks();
+    }
+  }
 }
 
 template <typename Function, class Message, class RequestType,
@@ -216,12 +334,12 @@ template <typename Function, class Message, class RequestType>
 struct takes_stop_token<
   Function, Message, RequestType,
   std::void_t<decltype(std::declval<Function>()(
-    std::declval<Message>(), std::declval<TaskManager<RequestType>&>()))>> : std::true_type
+    std::declval<Message>(), std::declval<TaskManager<RequestType, MPI_Comm>&>()))>> : std::true_type
 {};
 
 template <class Function, class Message, class RequestType, class Enable = void>
 struct maybe_stop_token_impl {
-    static auto call(Function f, Message m, TaskManager<RequestType>&) {
+    static auto call(Function f, Message m, TaskManager<RequestType, MPI_Comm>&) {
       return f(m);
     }
 };
@@ -230,44 +348,45 @@ struct maybe_stop_token_impl {
 template <class Function, class Message, class RequestType>
 struct maybe_stop_token_impl<Function, Message, RequestType,
   typename std::enable_if_t<takes_stop_token<Function,Message, RequestType>::value>> {
-    static auto call(Function f, Message m, TaskManager<RequestType>& s) {
+    static auto call(Function f, Message m, TaskManager<RequestType, MPI_Comm>& s) {
       return f(m,s);
     }
 };
 
 template <class Function, class Message, class RequestType>
-auto maybe_stop_token(Function f, Message m, TaskManager<RequestType>& s)
+auto maybe_stop_token(Function f, Message m, TaskManager<RequestType, MPI_Comm>& s)
 {
   return maybe_stop_token_impl<Function, Message, RequestType>::call(f, m, s);
 }
 
 template <class RequestType, class ResponseType, class Function>
-void worker(MPI_Comm comm, Function worker_fn)
+void worker_main(MPI_Comm subcomm, Function worker_fn, work_queue_options<RequestType> const& options)
 {
+  WorkerTaskManager<RequestType, ResponseType> stop_token(subcomm, options);
+  MPI_Comm queue_comm = options.get_native_queue_comm();
 
-  int rank;
-  MPI_Comm_rank(comm, &rank);
-  WorkerTaskManager<RequestType, ResponseType> stop_token(comm);
-
-  bool worker_done = false;
+  int worker_done = false;
   while(!worker_done) {
     MPI_Status task_status;
     RequestType request;
-    comm::recv(request, ROOT, MPI_ANY_TAG, comm, &task_status);
+    comm::recv(request, options.get_root(), MPI_ANY_TAG, queue_comm, &task_status);
 
     switch(worker_status(task_status.MPI_TAG)) {
       case worker_status::done:
         worker_done = true;
+        comm::bcast(worker_done, 0, subcomm);
         break;
       case worker_status::more:
         {
+          comm::bcast(worker_done, 0, subcomm);
+          comm::bcast(request, 0, subcomm);
           auto response = maybe_stop_token(worker_fn, request, stop_token);
-          comm::send(response, ROOT, (int)worker_status::done, comm);
+          comm::send(response, options.get_root(), (int)worker_status::done, queue_comm);
         }
         break;
       case worker_status::cancel:
       case worker_status::new_task:
-        MPI_Abort(comm, 2);
+        MPI_Abort(queue_comm, 2);
         break;
     }
   }
@@ -275,8 +394,25 @@ void worker(MPI_Comm comm, Function worker_fn)
   stop_token.wait_stopped();
 }
 
+template <class RequestType, class ResponseType, class Function>
+void worker_aux(MPI_Comm subcomm, Function worker_fn, work_queue_options<RequestType> const& options) {
+  RequestType request;
+  ResponseType response;
+  WorkerTaskManager<RequestType, ResponseType> task_manager(subcomm, options);
+  int worker_done = false;
+  while(!worker_done) {
+    comm::bcast(worker_done, 0, subcomm);
+    if(!worker_done) {
+      comm::bcast(request, 0, subcomm);
+      maybe_stop_token(worker_fn, request, task_manager);
+    }
+  }
+
+  task_manager.wait_stopped();
+}
+
 template <class RequestType>
-class NoWorkersTaskManager: public TaskManager<RequestType> {
+class NoWorkersTaskManager: public TaskManager<RequestType, MPI_Comm> {
   public:
 
   template<class TaskForwardIt>
@@ -315,6 +451,9 @@ class NoWorkersTaskManager: public TaskManager<RequestType> {
     return requests.empty();
   }
 
+  MPI_Comm get_subcommunicator() override {
+    return MPI_COMM_SELF;
+  }
 
   private:
   bool is_stop_requested = false;

@@ -32,7 +32,7 @@ class StopToken {
  * A distributed token which can be used to request stopping computation on a
  * work_queue
  */
-template <class RequestType>
+template <class RequestType, class CommunicatorType>
 class TaskManager: public StopToken {
   public:
   virtual ~TaskManager()=default;
@@ -42,6 +42,11 @@ class TaskManager: public StopToken {
    * \param[in] request the request that you would like the master to enqueue
    */
   virtual void push(RequestType const& request)=0;
+
+  /**
+   * Request a sub-communicator for the current process group
+   */
+  virtual CommunicatorType get_subcommunicator()=0;
 };
 
 }
