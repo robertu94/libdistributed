@@ -1,5 +1,6 @@
 #ifndef LIBDISTRIBUTED_STOP_TOKEN_H
 #define LIBDISTRIBUTED_STOP_TOKEN_H
+#include <cstddef>
 
 /**
  * \file
@@ -47,6 +48,11 @@ class TaskManager: public StopToken {
    * Request a sub-communicator for the current process group
    */
   virtual CommunicatorType get_subcommunicator()=0;
+
+  /**
+   * \returns the number of groups of worker processes available
+   */
+  virtual size_t num_workers() const=0;
 };
 
 }

@@ -3,6 +3,7 @@
 #include <set>
 #include <type_traits>
 #include <algorithm>
+#include <unordered_set>
 #include <mpi.h>
 
 #include "libdistributed_task_manager.h"
@@ -12,6 +13,17 @@
 namespace distributed {
 namespace queue {
 namespace impl {
+  
+template <class Container>
+size_t count_unique(Container const& c) {
+  std::unordered_set<typename Container::value_type> seen;
+  return std::count_if(
+      std::begin(c),
+      std::end(c),
+      [&seen](typename Container::const_reference v) {
+        return seen.insert(v).second;
+      });
+}
 
 template <class T>
 struct iterator_to_value_type {
@@ -49,6 +61,7 @@ public:
     , stop_request()
     , flag(0)
     , ROOT(options.get_root())
+    , num_workers_v(count_unique(options.get_groups()) - 1)
   {
     MPI_Ibcast(&done, 1, MPI_INT, ROOT, queue_comm, &stop_request);
   }
@@ -86,12 +99,17 @@ public:
     return subcomm;
   }
 
+  size_t num_workers() const override {
+    return num_workers_v;
+  }
+
   private:
   MPI_Comm queue_comm, subcomm;
   MPI_Request stop_request;
   int flag;
   int done;//used by MPI_Ibcast for syncronization, do not read unless flag==true
   const int ROOT;
+  size_t num_workers_v;
 };
 
 template <class RequestType>
@@ -99,12 +117,13 @@ class MasterTaskManager : public TaskManager<RequestType, MPI_Comm>
 {
 public:
   template <class TaskIt>
-  MasterTaskManager(MPI_Comm comm, MPI_Comm subcomm, TaskIt begin, TaskIt end, work_queue_options<RequestType> const& options)
+  MasterTaskManager(MPI_Comm comm, MPI_Comm subcomm, TaskIt begin, TaskIt end, work_queue_options<RequestType> const& options, size_t num_workers_v)
     : TaskManager<RequestType, MPI_Comm>(),
       comm(comm),
       subcomm(subcomm),
       is_stop_requested(0),
-      ROOT(options.get_root())
+      ROOT(options.get_root()),
+      num_workers_v(count_unique(options.get_groups())-1)
   {
        while(begin != end) {
         requests.emplace(*begin);
@@ -150,6 +169,10 @@ public:
     return subcomm;
   }
 
+  size_t num_workers() const override{
+    return num_workers_v;
+  }
+
   void recv_tasks() {
     int num_has_tasks = 0;
     int stop_requested_flag = 0;
@@ -173,6 +196,7 @@ public:
   int is_stop_requested;
   std::queue<RequestType> requests;
   const int ROOT;
+  size_t num_workers_v;
 };
 
 template <class RequestType, class ResponseType, class TaskForwardIt, class Function>
@@ -194,7 +218,7 @@ void master_main(MPI_Comm subcom, TaskForwardIt tasks_begin, TaskForwardIt tasks
 
     //create task queue
 
-    MasterTaskManager<RequestType> task_manager(comm, subcom, tasks_begin, tasks_end, options);
+    MasterTaskManager<RequestType> task_manager(comm, subcom, tasks_begin, tasks_end, options, workers.size());
 
     int outstanding = 0;
     while((!task_manager.empty() and !task_manager.stop_requested()) or outstanding > 0) {
@@ -224,7 +248,7 @@ void master_main(MPI_Comm subcom, TaskForwardIt tasks_begin, TaskForwardIt tasks
           int not_done = false;
           comm::bcast(not_done, 0, subcom);
           comm::bcast(response, 0, subcom);
-          maybe_stop_token(master_fn, response, task_manager);
+          maybe_stop_token(master_fn, std::move(response), task_manager);
           task_manager.recv_tasks();
           workers.push(response_status.MPI_SOURCE);
           outstanding--;
@@ -267,7 +291,8 @@ class MasterAuxTaskManager : public TaskManager<RequestType, MPI_Comm>
     stop_request(),
     flag(0),
     request_done(0),
-    ROOT(options.get_root())
+    ROOT(options.get_root()),
+    num_workers_v(count_unique(options.get_groups()) -1)
   {
     MPI_Ibcast(&done, 1, MPI_INT, ROOT, queue_comm, &stop_request);
   }
@@ -301,25 +326,31 @@ class MasterAuxTaskManager : public TaskManager<RequestType, MPI_Comm>
   MPI_Comm get_subcommunicator() override {
     return subcomm;
   }
+
+  size_t num_workers() const override {
+    return num_workers_v;
+  }
+
   private:
   MPI_Comm queue_comm, subcomm;
   MPI_Request stop_request;
   std::vector<RequestType> requests;
   int flag, done, request_done;
   const int ROOT;
+  size_t num_workers_v;
 };
 
 template <class RequestType, class ResponseType, class Function>
 void master_aux(MPI_Comm subcomm, Function master_fn, work_queue_options<RequestType> const& options) {
   MasterAuxTaskManager<RequestType, ResponseType> task_manager(subcomm, options);
-  ResponseType response;
 
   int master_done = false;
   while(!master_done) {
+    ResponseType response;
     comm::bcast(master_done, 0, subcomm);
     if(!master_done) {
       comm::bcast(response, 0, subcomm);
-      maybe_stop_token(master_fn, response, task_manager);
+      maybe_stop_token(master_fn, std::move(response), task_manager);
       task_manager.send_tasks();
     }
   }
@@ -334,7 +365,7 @@ template <typename Function, class Message, class RequestType>
 struct takes_stop_token<
   Function, Message, RequestType,
   std::void_t<decltype(std::declval<Function>()(
-    std::declval<Message>(), std::declval<TaskManager<RequestType, MPI_Comm>&>()))>> : std::true_type
+    std::move(std::declval<Message>()), std::declval<TaskManager<RequestType, MPI_Comm>&>()))>> : std::true_type
 {};
 
 template <class Function, class Message, class RequestType, class Enable = void>
@@ -354,9 +385,9 @@ struct maybe_stop_token_impl<Function, Message, RequestType,
 };
 
 template <class Function, class Message, class RequestType>
-auto maybe_stop_token(Function f, Message m, TaskManager<RequestType, MPI_Comm>& s)
+auto maybe_stop_token(Function f, Message&& m, TaskManager<RequestType, MPI_Comm>& s)
 {
-  return maybe_stop_token_impl<Function, Message, RequestType>::call(f, m, s);
+  return maybe_stop_token_impl<Function, Message, RequestType>::call(f, std::forward<Message>(m), s);
 }
 
 template <class RequestType, class ResponseType, class Function>
@@ -380,7 +411,7 @@ void worker_main(MPI_Comm subcomm, Function worker_fn, work_queue_options<Reques
         {
           comm::bcast(worker_done, 0, subcomm);
           comm::bcast(request, 0, subcomm);
-          auto response = maybe_stop_token(worker_fn, request, stop_token);
+          auto response = maybe_stop_token(worker_fn, std::move(request), stop_token);
           comm::send(response, options.get_root(), (int)worker_status::done, queue_comm);
         }
         break;
@@ -396,15 +427,14 @@ void worker_main(MPI_Comm subcomm, Function worker_fn, work_queue_options<Reques
 
 template <class RequestType, class ResponseType, class Function>
 void worker_aux(MPI_Comm subcomm, Function worker_fn, work_queue_options<RequestType> const& options) {
-  RequestType request;
-  ResponseType response;
   WorkerTaskManager<RequestType, ResponseType> task_manager(subcomm, options);
   int worker_done = false;
   while(!worker_done) {
     comm::bcast(worker_done, 0, subcomm);
     if(!worker_done) {
+      RequestType request;
       comm::bcast(request, 0, subcomm);
-      maybe_stop_token(worker_fn, request, task_manager);
+      maybe_stop_token(worker_fn, std::move(request), task_manager);
     }
   }
 
@@ -455,6 +485,10 @@ class NoWorkersTaskManager: public TaskManager<RequestType, MPI_Comm> {
     return MPI_COMM_SELF;
   }
 
+  size_t num_workers() const override {
+    return 1;
+  }
+
   private:
   bool is_stop_requested = false;
   std::queue<RequestType> requests{};
@@ -465,10 +499,10 @@ void no_workers(TaskForwardIt tasks_begin, TaskForwardIt tasks_end, MasterFn mas
   NoWorkersTaskManager<RequestType> task_manager(tasks_begin, tasks_end);
 
   while(!task_manager.empty() && !task_manager.stop_requested()) {
-    RequestType task = task_manager.front();
+    RequestType task = std::move(task_manager.front());
     task_manager.pop();
 
-    auto response = maybe_stop_token(worker_fn, task, task_manager);
+    auto response = maybe_stop_token(worker_fn, std::move(task), task_manager);
     maybe_stop_token(master_fn, response, task_manager);
   }
 }

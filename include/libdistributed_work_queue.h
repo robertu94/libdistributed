@@ -16,6 +16,18 @@ namespace distributed {
 namespace queue {
 
   /**
+   * type trait to determine task type from an iterator type
+   *
+   */
+  template <class Type>
+  struct iterator_to_request_type {
+    /**
+     * the contained within the iterator
+     */
+    using type = typename impl::iterator_to_value_type<Type>::type;
+  };
+
+  /**
    * \param[in] comm the communicator to duplicate to use for communication
    * \param[in] tasks_begin an iterator to the beginning of the task list
    * \param[in] tasks_end an iterator to the end of the task list
@@ -57,7 +69,7 @@ void work_queue (
 
   using RequestType = typename impl::iterator_to_value_type<TaskRandomIt>::type;
   using ResponseType = decltype( impl::maybe_stop_token( worker_fn,
-        std::declval<RequestType>(),
+        std::move(std::declval<RequestType>()),
         std::declval<TaskManager<RequestType, MPI_Comm>&>()
         )
       );

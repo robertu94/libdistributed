@@ -14,6 +14,10 @@
 
 namespace distributed {
 namespace queue {
+
+/**
+ * Options for the work_queue
+ */
 template<class Task>
 class work_queue_options {
   public:
@@ -28,13 +32,16 @@ class work_queue_options {
     /**
      * Construct a work queue options for a given communicator
      *
-     * \param[in] queue_comm the communicator to use for the queue
+     * \param[in] comm the communicator to use for the queue
      */ 
     work_queue_options(MPI_Comm comm)
   {
     MPI_Comm_dup(comm, &queue_comm);
   }
 
+    /**
+     * deallocate used the communicator used for the queue on destruction
+     */
     ~work_queue_options() {
       if(queue_comm != MPI_COMM_NULL) {
         MPI_Comm_free(&queue_comm);
@@ -43,11 +50,20 @@ class work_queue_options {
 
     work_queue_options(work_queue_options&)=delete;
     work_queue_options& operator=(work_queue_options&)=delete;
+
+    /**
+     * allow move construction
+     * \param rhs the object to move from
+     */
     work_queue_options(work_queue_options&& rhs) noexcept:
       queue_comm(rhs.queue_comm)
     {
       rhs.queue_comm = MPI_COMM_NULL;
     }
+    /**
+     * allow move assignment
+     * \param rhs the object to move from
+     */
     work_queue_options& operator=(work_queue_options&& rhs) noexcept {
       queue_comm = rhs.queue_comm;
       rhs.queue_comm = MPI_COMM_NULL;
@@ -71,6 +87,9 @@ class work_queue_options {
       return size;
     }
 
+    /**
+     * \returns if the rank is a master rank
+     */
     bool is_master() const {
       const auto groups = get_groups();
       const auto rank = get_queue_rank();

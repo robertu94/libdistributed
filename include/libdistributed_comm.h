@@ -1,3 +1,8 @@
+#ifndef LIBDISTRIBUTED_COMM_H
+#define LIBDISTRIBUTED_COMM_H
+
+
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -131,6 +136,60 @@ define_basic_type(float, MPI_FLOAT);
 define_basic_type(double, MPI_DOUBLE);
 define_basic_type(char, MPI_CHAR);
 
+/**
+ * serializer for arrays of initialized pointers
+ */
+template <class T> 
+struct serializer<T*>
+{
+  /** is the type serializable using MPI_Datatypes for both the sender and
+   * receiver at compile time?*/
+  using mpi_type = typename serializer<T>::mpi_type;
+  /** \returns a MPI_Datatype to represent the type if mpi_type is true, else MPI_INT */
+  static MPI_Datatype dtype() {
+    return serializer<T>::dtype();
+  }
+  /** \returns a string representing the name of the type */
+  static std::string name() {
+    return serializer<T>::name() + "*";
+  }
+
+  /** 
+   * Sends a data type from one location to another
+   * \param[in] t the data to send
+   * \param[in] dest the MPI rank to send to
+   * \param[in] tag the MPI tag to send to
+   * \param[in] comm the MPI_Comm to send to
+   * \returns an error code from the underlying send */
+  static int send(T* const& t, int dest, int tag, MPI_Comm comm) {
+    return serializer<T>::send(*t, dest, tag, comm);
+  }
+  /** 
+   Recv a data type from another location
+    \param[in] t the data to recv from
+    \param[in] source the MPI rank to recv from
+    \param[in] tag the MPI tag to recv from
+    \param[in] comm the MPI_Comm to recv from
+    \param[in] status the MPI_Status to recv from
+    \returns an error code from the underlying recv */
+  static int recv(T*& t, int source, int tag, MPI_Comm comm,
+                  MPI_Status* status) {
+    return serializer<T>::recv(*t, source, tag, comm, status);
+  }
+  
+  /** 
+   Broadcast a data type from another location
+    \param[in] t the data to broadcast from
+    \param[in] root the MPI rank to broadcast from
+    \param[in] comm the MPI_Comm to broadcast from
+    \returns an error code from the underlying MPI_Bcast(s) */
+  static int bcast(T*& t, int root, MPI_Comm comm) {
+    return serializer<T>::bcast(*t, root, comm);
+  }
+
+
+};
+
 /** specialization of serializion for pair */
 template <class T, class V>
 struct serializer<std::pair<T, V>>
@@ -151,8 +210,8 @@ struct serializer<std::pair<T, V>>
       std::pair<T, V> exemplar;
       int blocklen[] = { 1, 1 };
       MPI_Aint displacements[2];
-      MPI_Get_address(exemplar.first, &displacements[0]);
-      MPI_Get_address(exemplar.second, &displacements[1]);
+      MPI_Get_address(&exemplar.first, &displacements[0]);
+      MPI_Get_address(&exemplar.second, &displacements[1]);
       MPI_Aint min_address = std::min(displacements[0], displacements[1]);
       displacements[0] -= min_address;
       displacements[1] -= min_address;
@@ -964,3 +1023,4 @@ bcast(T& values, int root, MPI_Comm comm = MPI_COMM_WORLD)
 
 } // namespace comm
 } // namespace distributed
+#endif /* end of include guard: LIBDISTRIBUTED_COMM_H */
