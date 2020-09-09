@@ -17,6 +17,7 @@
 #include <map>
 #include <string>
 #include <mpi.h>
+#include "libdistributed_version.h"
 
 /**
  * \file
@@ -131,6 +132,9 @@ define_basic_type(uint64_t, MPI_UINT64_T);
 define_basic_type(float, MPI_FLOAT);
 define_basic_type(double, MPI_DOUBLE);
 define_basic_type(char, MPI_CHAR);
+#if !LIBDISTRIBUTED_COMPAT_HAS_SIZE_T_IS_UINTXX_T 
+define_basic_type(size_t, mpi_size_t());
+#endif
 
 /**
  * serializer for arrays of initialized pointers

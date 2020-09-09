@@ -22,6 +22,26 @@ if(NOT LIBDISTRIBUTED_CXX_VERSION)
   set_property(CACHE LIBDISTRIBUTED_CXX_VERSION PROPERTY STRINGS 17)
 endif()
 
+function(check_cpp_standard api)
+  string(TOUPPER "${api}" HEADER_SUFFIX)
+  try_compile(
+    COMPILED
+    ${CMAKE_BINARY_DIR}
+    SOURCES "${CMAKE_SOURCE_DIR}/checks/${api}.cc" 
+    CXX_STANDARD ${LIBDISTRIBUTED_CXX_VERSION}
+    CXX_STANDARD_REQUIRED ON
+  )
+  message(STATUS "Checking for ${api}: ${COMPILED}")
+  set(LIBDISTRIBUTED_COMPAT_HAS_${HEADER_SUFFIX} ${COMPILED} PARENT_SCOPE)
+endfunction()
+
+check_cpp_standard(size_t_is_uintXX_t)
+
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/libdistributed_version.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/include/libdistributed_version.h
+  )
+
 include(GNUInstallDirs)
 
 find_package(MPI COMPONENTS CXX)
@@ -42,6 +62,7 @@ add_library(libdistributed
 target_include_directories(
   libdistributed
   PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/libdistributed>
   )
@@ -64,6 +85,8 @@ install(TARGETS libdistributed EXPORT LibDistributedConfig
   )
 install(EXPORT LibDistributedConfig NAMESPACE LibDistributed:: DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/LibDistributed/cmake)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/libdistributed)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/libdistributed_version.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/libdistributed)
 
 option(BUILD_DOCS "build the documetation" OFF)
 if(BUILD_DOCS)

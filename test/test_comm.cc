@@ -53,7 +53,7 @@ class test_comm : public ::testing::Test {
   }
   void TearDown() override {
     distributed::comm::serializer::get_type_registry().clear();
-    MPI_Comm_free(&bcast_comm);
+    if(!(size < 2)) MPI_Comm_free(&bcast_comm);
   }
 
   int size, rank;
@@ -292,5 +292,17 @@ TEST_F(test_comm, tuple_vector_int_bcast) {
   if(rank < 2) {
     EXPECT_EQ(v, expected);
     EXPECT_EQ(comm::serializer::get_type_registry().size(), 0);
+  }
+}
+
+TEST_F(test_comm, test_size_t) {
+  std::vector<size_t> v;
+  std::vector<size_t> v_expected {1,2,3};
+  if(rank == 0) {
+    v = v_expected;
+  }
+  comm::bcast(v, 0);
+  if(rank < 2) {
+    EXPECT_EQ(v, v_expected);
   }
 }

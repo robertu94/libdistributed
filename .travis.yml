@@ -1,0 +1,72 @@
+language: cpp
+dist: bionic
+matrix:
+  allow_failures:
+    - os: osx
+  include:
+    - os: linux
+      env:
+        - CC=gcc-7
+        - CXX=g++-7
+        - MPI="libopenmpi-dev openmpi-bin"
+        - MPIEXEC=/usr/bin/mpiexec.openmpi 
+    - os: linux
+      env:
+        - CC=clang
+        - CXX=clang++
+        - MPI="libopenmpi-dev openmpi-bin"
+        - MPIEXEC=/usr/bin/mpiexec.openmpi 
+    - os: linux
+      env:
+        - CC=gcc-7
+        - CXX=g++-7
+        - MPI="libmpich-dev mpich"
+        - MPIEXEC=/usr/bin/mpiexec.mpich 
+    - os: linux
+      env:
+        - CC=clang
+        - CXX=clang++
+        - MPI="libmpich-dev mpich"
+        - MPIEXEC=/usr/bin/mpiexec.mpich 
+    - os: osx
+      osx_image: xcode11
+      env:
+        - MPI=mpich
+        - HOMEBREW_NO_AUTO_UPDATE=1
+    - os: osx
+      osx_image: xcode11
+      env:
+        - MPI=open-mpi
+        - HOMEBREW_NO_AUTO_UPDATE=1
+
+addons:
+  apt:
+    packages:
+      - doxygen
+      - graphviz
+
+before_install:
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then wget -O cmake.sh https://github.com/Kitware/CMake/releases/download/v3.14.6/cmake-3.14.6-Linux-x86_64.sh; fi
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then sudo sh cmake.sh --skip-licence --exclude-subdir --prefix=/usr/local; fi
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then sudo apt-get install -y $MPI ; fi
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install $MPI; fi
+  - export PATH=/usr/local/bin:$PATH
+  - cmake --version
+
+script:
+  - mkdir build
+  - cd build
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then cmake .. -DCMAKE_BUILD_TYPE=Debug -DBUILD_DOCS=ON -DMPIEXEC_EXECUTABLE=$MPIEXEC; fi
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cmake .. -DCMAKE_BUILD_TYPE=Debug -DBUILD_DOCS=OFF; fi
+  - cmake --build .
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then cmake --build . --target docs; fi
+  - ctest --output-on-failure --timeout 30
+
+deploy:
+  provider: pages
+  skip_cleanup: true
+  local_dir: build/html
+  github_token: $GH_REPO_TOKEN
+  on:
+    branch: master
+    condition: $CC = clang && $TRAVIS_OS_NAME = "linux"
