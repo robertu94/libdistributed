@@ -59,7 +59,7 @@ public:
     , queue_comm(options.get_native_queue_comm())
     , subcomm(subcomm)
     , stop_request()
-    , flag(0)
+    , flag(false)
     , ROOT(options.get_root())
     , num_workers_v(count_unique(options.get_groups()) - 1)
   {
@@ -282,7 +282,7 @@ void master_main(MPI_Comm subcom, TaskForwardIt tasks_begin, TaskForwardIt tasks
 }
 
 template <class RequestType, class ResponseType>
-class MasterAuxTaskManager : public TaskManager<RequestType, MPI_Comm>
+class MasterAuxTaskManager final : public TaskManager<RequestType, MPI_Comm>
 {
   public:
   MasterAuxTaskManager(MPI_Comm subcomm, work_queue_options<RequestType> const& options):
@@ -297,18 +297,24 @@ class MasterAuxTaskManager : public TaskManager<RequestType, MPI_Comm>
     MPI_Ibcast(&done, 1, MPI_INT, ROOT, queue_comm, &stop_request);
   }
 
-  void request_stop() override {
+  ~MasterAuxTaskManager() {
+    if(!flag) {
+      MPI_Wait(&stop_request, MPI_STATUS_IGNORE);
+    }
+  }
+
+  void request_stop() final {
     request_done = 1;
   }
 
-  bool stop_requested() override {
+  bool stop_requested() final {
     if(!flag) {
       MPI_Test(&stop_request, &flag, MPI_STATUS_IGNORE);
     }
     return flag;
   }
 
-  void push(RequestType const& request) override {
+  void push(RequestType const& request) final {
     requests.push_back(request);
   }
 
@@ -323,11 +329,11 @@ class MasterAuxTaskManager : public TaskManager<RequestType, MPI_Comm>
     requests.clear();
   }
 
-  MPI_Comm get_subcommunicator() override {
+  MPI_Comm get_subcommunicator() final {
     return subcomm;
   }
 
-  size_t num_workers() const override {
+  size_t num_workers() const final {
     return num_workers_v;
   }
 
@@ -345,7 +351,7 @@ void master_aux(MPI_Comm subcomm, Function master_fn, work_queue_options<Request
   MasterAuxTaskManager<RequestType, ResponseType> task_manager(subcomm, options);
 
   int master_done = false;
-  while(!master_done) {
+  while(!task_manager.stop_requested() && !master_done) {
     ResponseType response;
     comm::bcast(master_done, 0, subcomm);
     if(!master_done) {
@@ -429,7 +435,7 @@ template <class RequestType, class ResponseType, class Function>
 void worker_aux(MPI_Comm subcomm, Function worker_fn, work_queue_options<RequestType> const& options) {
   WorkerTaskManager<RequestType, ResponseType> task_manager(subcomm, options);
   int worker_done = false;
-  while(!worker_done) {
+  while(!task_manager.stop_requested() && !worker_done) {
     comm::bcast(worker_done, 0, subcomm);
     if(!worker_done) {
       RequestType request;

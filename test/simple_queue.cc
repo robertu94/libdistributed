@@ -31,7 +31,8 @@ int main(int argc, char *argv[])
     MPI_COMM_WORLD, std::begin(tasks), std::end(tasks),
     [](request req, queue::TaskManager<request, MPI_Comm>& token) {
       //code in this lambda expression gets run once for each task
-      auto [i] = req;
+      int i;
+      i = std::get<0>(req);
       std::cout << "worker got i=" << i << std::endl;
 
       // if the request is request 0, request termination
@@ -49,7 +50,9 @@ int main(int argc, char *argv[])
     [&](response res) {
       //code in this lambda gets run once for each element returned
       //by the worker threads
-      auto [i, d] = res;
+      int i; double d;
+      i = std::get<0>(res);
+      d = std::get<1>(res);
       std::cout << "master got i=" << i << " d=" << d << std::endl;
     });
 

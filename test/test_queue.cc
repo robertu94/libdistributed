@@ -32,7 +32,9 @@ TEST(test_work_queue, single_no_stop) {
         return std::make_tuple(req_value, std::pow(req_value, 2));
       },
       [&](response res) {
-        auto [i,d] = res;
+        int i; double d;
+        i = std::get<int>(res);
+        i = std::get<double>(res);
         results.push_back(res);
       }
       );
@@ -124,7 +126,9 @@ TEST(test_work_queue, single_withstop) {
         return std::make_tuple(req_value, std::pow(req_value, 2));
       },
       [&](response res) {
-        auto [i,d] = res;
+        int i; double d;
+        i = std::get<int>(res);
+        i = std::get<double>(res);
         results.push_back(res);
       }
       );
@@ -143,8 +147,6 @@ TEST(test_work_queue, single_dynamic_worker) {
   std::vector<request> tasks(size, 1);
   std::vector<response> results;
 
-  auto start_time = std::chrono::high_resolution_clock::now();
-
   int executions = 0;
   int total_executions = 0;
 
@@ -161,7 +163,9 @@ TEST(test_work_queue, single_dynamic_worker) {
         return std::make_tuple(req_value, std::pow(req_value, 2));
       },
       [&](response res) {
-        auto [i,d] = res;
+        int i; double d;
+        i = std::get<int>(res);
+        i = std::get<double>(res);
         results.push_back(res);
       }
       );
@@ -178,7 +182,6 @@ TEST(test_work_queue, single_dynamic_master) {
   std::vector<request> tasks(size, 1);
   std::vector<response> results;
 
-  auto start_time = std::chrono::high_resolution_clock::now();
 
   int executions = 0;
   int total_executions = 0;
@@ -193,7 +196,9 @@ TEST(test_work_queue, single_dynamic_master) {
         return std::make_tuple(req_value, std::pow(req_value, 2));
       },
       [&](response res, TaskManager<request, MPI_Comm>& token) {
-        auto [i,d] = res;
+        int i; double d;
+        i = std::get<int>(res);
+        i = std::get<double>(res);
         if(i == 1) {
           token.push(2);
         }
@@ -213,7 +218,6 @@ TEST(test_work_queue, fallback_1process) {
   std::vector<request> tasks(size, 1);
   std::vector<response> results;
 
-  auto start_time = std::chrono::high_resolution_clock::now();
 
   int executions = 0;
   int total_executions = 0;
@@ -228,7 +232,9 @@ TEST(test_work_queue, fallback_1process) {
         return std::make_tuple(req_value, std::pow(req_value, 2));
       },
       [&](response res, TaskManager<request, MPI_Comm>& token) {
-        auto [i,d] = res;
+        int i; double d;
+        i = std::get<int>(res);
+        i = std::get<double>(res);
         if(i == 1) {
           token.push(2);
         }
@@ -281,7 +287,9 @@ TEST(test_work_queue, worker_masters_groups) {
         return std::make_tuple(req_value, std::pow(req_value, 2));
       },
       [&](response res, TaskManager<request, MPI_Comm>& token) {
-        auto [i,d] = res;
+        int i; double d;
+        i = std::get<int>(res);
+        i = std::get<double>(res);
         MPI_Comm subcomm = token.get_subcommunicator();
         int subcomm_size = 0;
         MPI_Comm_size(subcomm, &subcomm_size);
@@ -339,7 +347,9 @@ TEST(test_work_queue, worker_masters_groups_with_cancelation) {
         return std::make_tuple(req_value, std::pow(req_value, 2));
       },
       [&](response res, TaskManager<request, MPI_Comm>& token) {
-        auto [i,d] = res;
+        int i; double d;
+        i = std::get<int>(res);
+        i = std::get<double>(res);
         MPI_Comm subcomm = token.get_subcommunicator();
         int subcomm_size = 0, subcomm_rank = 0;
         MPI_Comm_size(subcomm, &subcomm_size);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(libdistributed VERSION "0.0.11" LANGUAGES CXX)
+project(libdistributed VERSION "0.1.0" LANGUAGES CXX)
 
 #correct was to set a default build type
 # https://blog.kitware.com/cmake-and-the-default-build-type/
@@ -15,21 +15,12 @@ endif()
 include(CTest)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(default_cxx_standard 17)
-if(NOT LIBDISTRIBUTED_CXX_VERSION)
-  set(LIBDISTRIBUTED_CXX_VERSION ${default_cxx_standard} CACHE 
-    STRING "Which version of the cxx standard to expect" FORCE)
-  set_property(CACHE LIBDISTRIBUTED_CXX_VERSION PROPERTY STRINGS 17)
-endif()
-
 function(check_cpp_standard api)
   string(TOUPPER "${api}" HEADER_SUFFIX)
   try_compile(
     COMPILED
     ${CMAKE_BINARY_DIR}
     SOURCES "${CMAKE_SOURCE_DIR}/checks/${api}.cc" 
-    CXX_STANDARD ${LIBDISTRIBUTED_CXX_VERSION}
-    CXX_STANDARD_REQUIRED ON
   )
   message(STATUS "Checking for ${api}: ${COMPILED}")
   set(LIBDISTRIBUTED_COMPAT_HAS_${HEADER_SUFFIX} ${COMPILED} PARENT_SCOPE)
@@ -44,7 +35,8 @@ configure_file(
 
 include(GNUInstallDirs)
 
-find_package(MPI COMPONENTS CXX)
+find_package(std_compat REQUIRED)
+find_package(MPI COMPONENTS CXX REQUIRED)
 
 option(BUILD_SHARED_LIBS "BUILD SHARED LIBRARIES" ON)
 add_library(libdistributed
@@ -66,8 +58,7 @@ target_include_directories(
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/libdistributed>
   )
-target_link_libraries( libdistributed PUBLIC MPI::MPI_CXX)
-target_compile_features(libdistributed PUBLIC cxx_std_${LIBDISTRIBUTED_CXX_VERSION})
+target_link_libraries( libdistributed PUBLIC MPI::MPI_CXX std_compat::std_compat)
 
 option(USE_CLANG_TIDY "include clang-tidy warnings in the build log" OFF)
 if(USE_CLANG_TIDY)

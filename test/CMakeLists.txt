@@ -34,6 +34,10 @@ function(add_mpi_gtest)
   target_link_libraries(${test_name} PUBLIC libdistributed gtest gmock)
   add_test(NAME ${test_name} COMMAND ${MPIEXEC_EXECUTABLE}
     "${MPIEXEC_NUMPROC_FLAG}" "${MPIEXEC_MAX_NUMPROCS}" "${CMAKE_CURRENT_BINARY_DIR}/${test_name}")
+  if(USE_CLANG_TIDY)
+    set_target_properties(${test_name} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY}")
+    set_target_properties(${test_name} PROPERTIES C_CLANG_TIDY "${CLANG_TIDY}")
+  endif()
 endfunction()
 
 add_mpi_gtest(test_types.cc)

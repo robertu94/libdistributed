@@ -7,15 +7,16 @@
 #include <array>
 #include <cstddef>
 #include <memory>
-#include <optional>
+#include <ostream>
 #include <sstream>
 #include <tuple>
-#include <type_traits>
+#include <std_compat/type_traits.h>
 #include <utility>
-#include <variant>
 #include <vector>
 #include <map>
 #include <string>
+#include <std_compat/optional.h>
+#include <std_compat/variant.h>
 #include <mpi.h>
 #include "libdistributed_version.h"
 
@@ -37,6 +38,119 @@ namespace {
            (std::is_same<uint32_t, size_t>::value) ? MPI_UINT32_T :
            (std::is_same<uint64_t, size_t>::value) ? MPI_UINT64_T :
            MPI_INT;
+  }
+
+
+  template <template <class...> class Container, size_t N, class IndexedPredicate, class... T>
+  struct fold_or_impl {
+    template <class... Args>
+    static 
+    auto
+    fold(Container<T...>& v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<N>(v, args...))
+    {
+      return f.template operator()<N>(v, args...) ||
+        fold_or_impl<Container, N-1, IndexedPredicate, T...>::fold(v, f, args...);
+
+    }
+    template <class... Args>
+    static 
+    auto
+    fold(Container<T...>const& v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<N>(v, args...))
+    {
+      return f.template operator()<N>(v, args...) ||
+        fold_or_impl<Container, N-1, IndexedPredicate, T...>::fold(v, f, args...);
+
+    }
+  };
+
+  template <template <class...> class Container, class IndexedPredicate, class... T>
+  struct fold_or_impl<Container, 0, IndexedPredicate, T...> {
+    template <class... Args>
+    static auto fold(Container<T...>& v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+    {
+      return f.template operator()<0>(v, args...);
+    }
+    template <class... Args>
+    static auto fold(Container<T...>const& v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+    {
+      return f.template operator()<0>(v, args...);
+    }
+  };
+
+  template <template <class...> class Container, class... T, class IndexedPredicates, class... Args>
+  auto fold_or(Container<T...>& v, IndexedPredicates f, Args&&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+  {
+    
+    return fold_or_impl<Container, sizeof...(T)-1, IndexedPredicates, T...>::fold(v,f, std::forward<Args>(args)...);
+  }
+
+  template <template <class...> class Container, class... T, class IndexedPredicates, class... Args>
+  auto fold_or(Container<T...>const& v, IndexedPredicates f, Args&&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+  {
+    
+    return fold_or_impl<Container, sizeof...(T)-1, IndexedPredicates, T...>::fold(v,f, std::forward<Args>(args)...);
+  }
+
+  template <template <class...> class Container, size_t N, class IndexedPredicate, class... T>
+  struct fold_comma_impl {
+    template <class... Args>
+    static 
+    auto
+    fold(Container<T...>& v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<N>(v, args...))
+    {
+      fold_comma_impl<Container, N-1, IndexedPredicate, T...>::fold(v, f, args...);
+      return f.template operator()<N>(v, args...);
+    }
+
+    template <class... Args>
+    static 
+    auto
+    fold(Container<T...>const& v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<N>(v, args...))
+    {
+      fold_comma_impl<Container, N-1, IndexedPredicate, T...>::fold(v, f, args...);
+      return f.template operator()<N>(v, args...);
+    }
+  };
+
+  template <template <class...> class Container, class IndexedPredicate, class... T>
+  struct fold_comma_impl<Container, 0, IndexedPredicate, T...> {
+    template <class... Args>
+    static auto fold(Container<T...>& v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+    {
+      return f.template operator()<0>(v, args...);
+    }
+    template <class... Args>
+    static auto fold(Container<T...>const & v, IndexedPredicate f, Args&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+    {
+      return f.template operator()<0>(v, args...);
+    }
+  };
+
+  template <template <class...> class Container, class... T, class IndexedPredicates, class... Args>
+  auto fold_comma(Container<T...>& v, IndexedPredicates f, Args&&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+  {
+    
+    return fold_comma_impl<Container, sizeof...(T)-1, IndexedPredicates, T...>::fold(v,f, std::forward<Args>(args)...);
+  }
+
+
+  template <template <class...> class Container, class... T, class IndexedPredicates, class... Args>
+  auto fold_comma(Container<T...> const& v, IndexedPredicates f, Args&&... args)
+    -> decltype(f.template operator()<0>(v, args...))
+  {
+    
+    return fold_comma_impl<Container, sizeof...(T)-1, IndexedPredicates, T...>::fold(v,f, std::forward<Args>(args)...);
   }
 
 }
@@ -196,7 +310,7 @@ struct serializer<std::pair<T, V>>
 {
   /** is the type serializable using MPI_Datatypes for both the sender and
    * receiver at compile time?*/
-  using mpi_type = std::conjunction<typename serializer<T>::mpi_type,
+  using mpi_type = compat::conjunction<typename serializer<T>::mpi_type,
                                     typename serializer<V>::mpi_type>;
 
   /** \returns a MPI_Datatype to represent the type if mpi_type is true, else MPI_INT */
@@ -292,6 +406,24 @@ struct serializer<std::pair<T, V>>
   }
 };
 
+template <class T, class... Rest>
+struct printer {
+  static std::ostream& print(std::ostream& out) {
+    out << serializer<T>::name() << ',';
+    return printer<Rest...>::print(out);
+  }
+};
+
+template <class T>
+struct printer<T> {
+  static std::ostream& print(std::ostream& out) {
+    return out << serializer<T>::name() << ',';
+  }
+};
+template <class... T>
+std::ostream& make_name(std::ostream& out) {
+  return printer<T...>::print(out);
+}
 
 /** specialization of serializion for tuple */
 template <class... T>
@@ -299,13 +431,13 @@ struct serializer<std::tuple<T...>>
 {
   /** is the type serializable using MPI_Datatypes for both the sender and
    * receiver at compile time?*/
-  using mpi_type = std::conjunction<typename serializer<T>::mpi_type...>;
+  using mpi_type = compat::conjunction<typename serializer<T>::mpi_type...>;
 
   /** \returns a string representing the name of the type */
   static std::string name() { 
     std::stringstream n;
     n << "std::tuple<";
-    (n << ... << (serializer<T>::name() + ","));
+    make_name<T...>(n);
     n << ">";
     return n.str();
   }
@@ -439,40 +571,59 @@ struct serializer<std::tuple<T...>>
       }
 
 
-      template <class Tuple, size_t... Is>
-      static int recv_each_impl(Tuple& arg, MPI_Comm comm, MPI_Status* status, std::index_sequence<Is...>) {
-        (serializer<typename std::tuple_element<Is,Tuple>::type>::recv(std::get<Is>(arg), status->MPI_SOURCE, status->MPI_TAG, comm, status), ...);
+      struct recv_impl{
+        template<size_t N, class Tuple>
+        void operator()(Tuple& arg, MPI_Comm comm, MPI_Status* status) {
+          serializer<typename std::tuple_element<N,Tuple>::type>::recv(std::get<N>(arg), status->MPI_SOURCE, status->MPI_TAG, comm, status);
+        }
+      };
+      template <class Tuple>
+      static int recv_each_impl(Tuple& arg, MPI_Comm comm, MPI_Status* status) {
+        fold_comma(arg, recv_impl{}, comm, status);
         return 0;
       }
 
       static int recv_each(std::tuple<T...>& arg, MPI_Comm comm, MPI_Status* status) {
-        return recv_each_impl(arg, comm, status, std::index_sequence_for<T...>{});
+        return recv_each_impl(arg, comm, status);
       }
 
-      template <class Tuple, size_t... Is>
-      static int send_each_impl(Tuple const& arg, int dest, int tag, MPI_Comm comm, std::index_sequence<Is...>) {
-        (serializer<typename std::tuple_element<Is,Tuple>::type>::send(std::get<Is>(arg), dest, tag, comm), ...);
+
+      struct send_impl{
+        template<size_t N, class Tuple>
+        void operator()(Tuple const& arg, int dest, int tag, MPI_Comm comm) {
+          serializer<typename std::tuple_element<N,Tuple>::type>::send(std::get<N>(arg), dest, tag, comm);
+        }
+      };
+      template <class Tuple>
+      static int send_each_impl(Tuple const& arg, int dest, int tag, MPI_Comm comm) {
+        fold_comma(arg, send_impl{}, dest, tag, comm);
         return 0;
       }
 
       static int send_each(std::tuple<T...> const& arg, int dest, int tag, MPI_Comm comm) {
-        return send_each_impl(arg, dest, tag, comm, std::index_sequence_for<T...>{});
+        return send_each_impl(arg, dest, tag, comm);
       }
 
-      template <class Tuple, size_t... Is>
-      static int bcast_each_impl(Tuple& arg, int root, MPI_Comm comm, std::index_sequence<Is...>) {
-        (serializer<typename std::tuple_element<Is,Tuple>::type>::bcast(std::get<Is>(arg), root, comm), ...);
+      struct bcast_impl{
+        template <size_t N, class Tuple>
+        void operator()(Tuple& arg, int root, MPI_Comm comm) {
+          serializer<typename std::tuple_element<N,Tuple>::type>::bcast(std::get<N>(arg), root, comm);
+        }
+      };
+      template <class Tuple>
+      static int bcast_each_impl(Tuple& arg, int root, MPI_Comm comm) {
+        fold_comma(arg, bcast_impl{}, root, comm);
         return 0;
       }
 
       static int bcast_each(std::tuple<T...>& arg, int root, MPI_Comm comm) {
-        return bcast_each_impl(arg, root, comm, std::index_sequence_for<T...>{});
+        return bcast_each_impl(arg, root, comm);
       }
 };
 
 /** specialization of serializion for variant */
 template <class... T>
-struct serializer<std::variant<T...>>
+struct serializer<compat::variant<T...>>
 {
   /** is the type serializable using MPI_Datatypes for both the sender and
    * receiver at compile time?*/
@@ -480,8 +631,9 @@ struct serializer<std::variant<T...>>
   /** \returns a string representing the name of the type */
   static std::string name() {
     std::stringstream ss;
-    ss << "std::variant<"; 
-    (ss << ... << (serializer<T>::name() + ","));
+    ss << "compat::variant<"; 
+    make_name<T...>(ss);
+    //(ss << ... << (serializer<T>::name() + ","));
     ss << '>';
     return ss.str();
   }
@@ -497,11 +649,11 @@ struct serializer<std::variant<T...>>
    * \param[in] tag the MPI tag to send to
    * \param[in] comm the MPI_Comm to send to
    * \returns an error code from the underlying send */
-  static int send(std::variant<T...> const& t, int dest, int tag, MPI_Comm comm)
+  static int send(compat::variant<T...> const& t, int dest, int tag, MPI_Comm comm)
   {
-    size_t index = t.index();
+    size_t index = compat::index(t);
     MPI_Send(&index, 1, mpi_size_t(), dest, tag, comm);
-    if(index != std::variant_npos) {
+    if(index != compat::variant_npos) {
       send_index(t, index, dest, tag, comm);
     }
 
@@ -515,13 +667,13 @@ struct serializer<std::variant<T...>>
    * \param[in] comm the MPI_Comm to recv from
    * \param[in] status the MPI_Status to recv from
    * \returns an error code from the underlying recv */
-  static int recv(std::variant<T...>& t, int source, int tag, MPI_Comm comm,
+  static int recv(compat::variant<T...>& t, int source, int tag, MPI_Comm comm,
                   MPI_Status* status) {
     MPI_Status alt_status;
     if(status == MPI_STATUS_IGNORE) status = &alt_status;
     size_t index;
     MPI_Recv(&index, 1, mpi_size_t(), source, tag, comm, status);
-    if(index != std::variant_npos) {
+    if(index != compat::variant_npos) {
       recv_index(t, index, status->MPI_SOURCE, status->MPI_TAG, comm, status);
     }
     return 0;
@@ -532,10 +684,10 @@ struct serializer<std::variant<T...>>
    * \param[in] root the MPI rank to broadcast from
    * \param[in] comm the MPI_Comm to broadcast from
    * \returns an error code from the underlying MPI_Bcast(s) */
-  static int bcast(std::variant<T...>& t, int root, MPI_Comm comm) {
-    size_t index = t.index();
+  static int bcast(compat::variant<T...>& t, int root, MPI_Comm comm) {
+    size_t index = compat::index(t);
     MPI_Bcast(&index, 1, mpi_size_t(), root, comm);
-    if(index != std::variant_npos) {
+    if(index != compat::variant_npos) {
       bcast_index(t, index, root, comm);
     }
     return 0;
@@ -543,90 +695,96 @@ struct serializer<std::variant<T...>>
   private:
 
 
+  struct send_if {
   template <size_t N, class Tuple>
-  static int send_if(Tuple const& t, size_t index, int dest, int tag, MPI_Comm comm) {
-    if(N == index) {
-      using dtype = typename std::variant_alternative<N,Tuple>::type;
-      auto const& value = std::get<N>(t);
-      if(serializer<dtype>::mpi_type::value) {
-        return MPI_Send(&value, 1, serializer<dtype>::dtype(), dest, tag, comm);
-      } else {
-        return serializer<dtype>::send(value, dest, tag, comm);
-      }
-    }
-    return 0;
-  }
-  template <size_t... Is>
-  static int send_index_impl(std::variant<T...> const&t, size_t index, int dest, int tag, MPI_Comm comm, std::index_sequence<Is...>) {
-    return ( ... || send_if<Is>(t, index, dest, tag, comm));
-  }
-  static int send_index(std::variant<T...> const&t, size_t index, int dest, int tag, MPI_Comm comm) {
-    return send_index_impl(t, index, dest, tag, comm, std::index_sequence_for<T...>());
-  }
-
-
-  template <size_t N, class Tuple>
-  static int recv_if(Tuple& t, size_t index, int source, int tag, MPI_Comm comm, MPI_Status* status) {
-    int ret = 0;
-    if(N == index) {
-      using dtype = typename std::variant_alternative<N,Tuple>::type;
-      dtype value;
-      if(serializer<dtype>::mpi_type::value) {
-        ret = MPI_Recv(&value, 1, serializer<dtype>::dtype(), source, tag, comm, status);
-      } else {
-        ret = serializer<dtype>::recv(value, source, tag, comm, status);
-      }
-      t = std::move(value);
-    }
-    return ret;
-  }
-  template <size_t... Is>
-  static int recv_index_impl(std::variant<T...>&t, size_t index, int source, int tag, MPI_Comm comm, MPI_Status* status, std::index_sequence<Is...>) {
-    return ( ... || recv_if<Is>(t, index, source, tag, comm, status));
-  }
-  static int recv_index(std::variant<T...>&t, size_t index, int source, int tag, MPI_Comm comm, MPI_Status* status) {
-    return recv_index_impl(t, index, source, tag, comm, status, std::index_sequence_for<T...>());
-  }
-
-  template<size_t N, class Tuple>
-  static int bcast_if(Tuple& t, size_t index, int root, MPI_Comm comm) {
-    int ret = 0;
-    if(index == N) {
-      using dtype = typename std::variant_alternative<N,Tuple>::type;
-      int rank;
-      MPI_Comm_rank(comm, &rank);
-      if(rank == root){ 
-        dtype value = std::get<N>(t);
+    int operator()(Tuple const& t, size_t index, int dest, int tag, MPI_Comm comm) {
+      if(N == index) {
+        using dtype = typename compat::variant_alternative<N,Tuple>::type;
+        auto const& value = compat::get<N>(t);
         if(serializer<dtype>::mpi_type::value) {
-          MPI_Bcast(&value, 1, serializer<dtype>::dtype(), root, comm);
+          return MPI_Send(&value, 1, serializer<dtype>::dtype(), dest, tag, comm);
         } else {
-          serializer<dtype>::bcast(value, root, comm);
+          return serializer<dtype>::send(value, dest, tag, comm);
         }
-      } else {
+      }
+      return 0;
+    }
+  };
+
+  static int send_index_impl(compat::variant<T...> const&t, size_t index, int dest, int tag, MPI_Comm comm) {
+    return fold_or(t, send_if{}, index, dest, tag, comm);
+  }
+  static int send_index(compat::variant<T...> const&t, size_t index, int dest, int tag, MPI_Comm comm) {
+    return send_index_impl(t, index, dest, tag, comm);
+  }
+
+
+  struct recv_if {
+    template <size_t N, class Tuple>
+    int operator()(Tuple& t, size_t index, int source, int tag, MPI_Comm comm, MPI_Status* status) {
+      int ret = 0;
+      if(N == index) {
+        using dtype = typename compat::variant_alternative<N,Tuple>::type;
         dtype value;
         if(serializer<dtype>::mpi_type::value) {
-          MPI_Bcast(&value, 1, serializer<dtype>::dtype(), root, comm);
+          ret = MPI_Recv(&value, 1, serializer<dtype>::dtype(), source, tag, comm, status);
         } else {
-          serializer<dtype>::bcast(value, root, comm);
+          ret = serializer<dtype>::recv(value, source, tag, comm, status);
         }
-        t = value;
+        t = std::move(value);
       }
+      return ret;
     }
-    return ret;
+  };
+
+  static int recv_index_impl(compat::variant<T...>&t, size_t index, int source, int tag, MPI_Comm comm, MPI_Status* status) {
+    return fold_or(t, recv_if{}, index, source, tag, comm, status);
+  }
+  static int recv_index(compat::variant<T...>&t, size_t index, int source, int tag, MPI_Comm comm, MPI_Status* status) {
+    return recv_index_impl(t, index, source, tag, comm, status);
   }
 
+  struct bcast_if{
+    template<size_t N, class Tuple>
+    int operator()(Tuple& t, size_t index, int root, MPI_Comm comm) {
+      int ret = 0;
+      if(index == N) {
+        using dtype = typename compat::variant_alternative<N,Tuple>::type;
+        int rank;
+        MPI_Comm_rank(comm, &rank);
+        if(rank == root){ 
+          dtype value = compat::get<N>(t);
+          if(serializer<dtype>::mpi_type::value) {
+            MPI_Bcast(&value, 1, serializer<dtype>::dtype(), root, comm);
+          } else {
+            serializer<dtype>::bcast(value, root, comm);
+          }
+        } else {
+          dtype value;
+          if(serializer<dtype>::mpi_type::value) {
+            MPI_Bcast(&value, 1, serializer<dtype>::dtype(), root, comm);
+          } else {
+            serializer<dtype>::bcast(value, root, comm);
+          }
+          t = value;
+        }
+      }
+      return ret;
+    }
+  };
+
   template<size_t... Is>
-  static int bcast_index_impl(std::variant<T...>&t, size_t index, int root, MPI_Comm comm, std::index_sequence<Is...>) {
-    return (... || bcast_if<Is>(t, index, root, comm));
+  static int bcast_index_impl(compat::variant<T...>&t, size_t index, int root, MPI_Comm comm, std::index_sequence<Is...>) {
+    return fold_or(t, bcast_if{}, index, root, comm);
   }
-  static int bcast_index(std::variant<T...>&t, size_t index, int root, MPI_Comm comm) {
+  static int bcast_index(compat::variant<T...>&t, size_t index, int root, MPI_Comm comm) {
     return bcast_index_impl(t, index, root, comm, std::index_sequence_for<T...>{});
   }
 };
 
 /** specialization of serializion for optional */
 template <class T>
-struct serializer<std::optional<T>>
+struct serializer<compat::optional<T>>
 {
   /** is the type serializable using MPI_Datatypes for both the sender and
    * receiver at compile time?*/
@@ -636,7 +794,7 @@ struct serializer<std::optional<T>>
   /** \returns a string representing the name of the type */
   static std::string name() {
     std::stringstream ss;
-    ss << "std::optional<" << serializer<T>::name() << '>';
+    ss << "compat::optional<" << serializer<T>::name() << '>';
     return ss.str();
   }
   /** 
@@ -646,7 +804,7 @@ struct serializer<std::optional<T>>
    * \param[in] tag the MPI tag to send to
    * \param[in] comm the MPI_Comm to send to
    * \returns an error code from the underlying send */
-  static int send(std::optional<T> const& t, int dest, int tag, MPI_Comm comm)
+  static int send(compat::optional<T> const& t, int dest, int tag, MPI_Comm comm)
   {
     int occupied = t.has_value();
     int ret = MPI_Send(&occupied, 1, MPI_INT, dest, tag, comm);
@@ -664,7 +822,7 @@ struct serializer<std::optional<T>>
    * \param[in] comm the MPI_Comm to recv from
    * \param[in] status the MPI_Status to recv from
    * \returns an error code from the underlying recv */
-  static int recv(std::optional<T>& t, int source, int tag, MPI_Comm comm,
+  static int recv(compat::optional<T>& t, int source, int tag, MPI_Comm comm,
                   MPI_Status* status) {
     MPI_Status alt_status;
     if(status == MPI_STATUS_IGNORE) status = &alt_status;
@@ -683,7 +841,7 @@ struct serializer<std::optional<T>>
    * \param[in] root the MPI rank to broadcast from
    * \param[in] comm the MPI_Comm to broadcast from
    * \returns an error code from the underlying MPI_Bcast(s) */
-  static int bcast(std::optional<T>& t, int root, MPI_Comm comm) {
+  static int bcast(compat::optional<T>& t, int root, MPI_Comm comm) {
     //has_value may be called if the process has a value or not
     int occupied = t.has_value();
     int ret = MPI_Bcast(&occupied, 1, MPI_INT, root, comm);

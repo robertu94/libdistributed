@@ -4,6 +4,8 @@
 #include <cmath>
 #include <thread>
 #include <chrono>
+#include <std_compat/optional.h>
+#include <std_compat/variant.h>
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
@@ -17,7 +19,7 @@ using namespace std::literals::chrono_literals;
  */
 namespace std{
   template <class T>
-  void PrintTo(const std::optional<T>& optional, std::ostream* os) {
+  void PrintTo(const compat::optional<T>& optional, std::ostream* os) {
     if(optional)
     {
       *os << *optional;
@@ -26,19 +28,21 @@ namespace std{
     }
   }
 
-  template <size_t N, class Tuple>
-  void PrintToIfImpl(const Tuple& v, std::ostream* os, size_t index) {
-    if(N == index) {
-      *os << "{ " << index  << " " << std::get<N>(v) << " }";
+  struct PrintToIfImpl {
+    template <size_t N, class Tuple>
+    void operator()(const Tuple& v, std::ostream* os, size_t index) {
+      if(N == index) {
+        *os << "{ " << index  << " " << compat::get<N>(v) << " }";
+      }
     }
-  }
+  };
   template <class... T, size_t... Is>
-  void PrintToImpl(const std::variant<T...>& v, std::ostream* os, size_t index,  std::index_sequence<Is...>) {
-    (PrintToIfImpl<Is>(v, os, index) , ...);
+  void PrintToImpl(const compat::variant<T...>& v, std::ostream* os, size_t index,  std::index_sequence<Is...>) {
+    comm::serializer::fold_comma(v, PrintToIfImpl{}, os, index);
   }
   template <class... T>
-  void PrintTo(const std::variant<T...>& v, std::ostream* os) {
-    size_t index = v.index();
+  void PrintTo(const compat::variant<T...>& v, std::ostream* os) {
+    size_t index = compat::index(v);
     PrintToImpl(v, os, index, std::index_sequence_for<T...>{});
   }
 }
@@ -61,8 +65,8 @@ class test_comm : public ::testing::Test {
 };
 
 TEST_F(test_comm, primatives) {
-  int i;
-  double d;
+  int i{};
+  double d{};
   if(rank == 0) {
     i = 3;
     d = 2.5;
@@ -180,8 +184,8 @@ TEST_F(test_comm, tuple_bcast) {
 
 
 TEST_F(test_comm, optional) {
-  std::optional<double> v;
-  std::optional<double> expected = 2.4;
+  compat::optional<double> v;
+  compat::optional<double> expected = 2.4;
   if(rank == 0) {
     v = expected;
     comm::send(v, 1);
@@ -195,8 +199,8 @@ TEST_F(test_comm, optional) {
 }
 
 TEST_F(test_comm, optional_bcast) {
-  std::optional<double> v;
-  std::optional<double> expected = 2.3;
+  compat::optional<double> v;
+  compat::optional<double> expected = 2.3;
   if(rank == 0) {
     v = expected;
   }
@@ -237,8 +241,8 @@ TEST_F(test_comm, array_bcast) {
 }
 
 TEST_F(test_comm, variant) {
-  std::variant<int, double> v;
-  std::variant<int, double> expected = 2.4;
+  compat::variant<int, double> v;
+  compat::variant<int, double> expected = 2.4;
   if(rank == 0) {
     v = expected;
     comm::send(v, 1);
@@ -252,8 +256,8 @@ TEST_F(test_comm, variant) {
 }
 
 TEST_F(test_comm, variant_bcast) {
-  std::variant<int, double> v;
-  std::variant<int, double> expected = 2.4;
+  compat::variant<int, double> v;
+  compat::variant<int, double> expected = 2.4;
   if(rank == 0) {
     v = expected;
   }
