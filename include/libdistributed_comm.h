@@ -1022,11 +1022,13 @@ struct serializer<std::basic_string<CharT>>
     size_t size = t.size(), ret=0;
     ret = MPI_Bcast(&size, 1, mpi_size_t(), root, comm);
     t.resize(size);
-    if (serializer<CharT>::mpi_type::value) {
-      return MPI_Bcast(&t.front(), t.size(), serializer<CharT>::dtype(), root, comm);
-    } else {
-      for (auto& item : t) {
-        ret |= serializer<CharT>::bcast(item, root, comm);
+    if(size > 0) {
+      if (serializer<CharT>::mpi_type::value) {
+        return MPI_Bcast(&t.front(), t.size(), serializer<CharT>::dtype(), root, comm);
+      } else {
+        for (auto& item : t) {
+          ret |= serializer<CharT>::bcast(item, root, comm);
+        }
       }
     }
     return ret;
