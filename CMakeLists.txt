@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(libdistributed VERSION "0.1.1" LANGUAGES CXX)
+project(libdistributed VERSION "0.1.2" LANGUAGES CXX)
 
 #correct was to set a default build type
 # https://blog.kitware.com/cmake-and-the-default-build-type/
@@ -42,6 +42,7 @@ option(BUILD_SHARED_LIBS "BUILD SHARED LIBRARIES" ON)
 add_library(libdistributed
   #core features
     src/work_queue.cc
+    src/comm.cc
 
   #public headers
         include/libdistributed_task_manager.h
