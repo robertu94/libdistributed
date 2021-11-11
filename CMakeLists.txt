@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(libdistributed VERSION "0.1.2" LANGUAGES CXX)
+project(libdistributed VERSION "0.2.0" LANGUAGES CXX)
 
 #correct was to set a default build type
 # https://blog.kitware.com/cmake-and-the-default-build-type/
@@ -39,6 +39,7 @@ find_package(std_compat REQUIRED)
 find_package(MPI COMPONENTS CXX REQUIRED)
 
 option(BUILD_SHARED_LIBS "BUILD SHARED LIBRARIES" ON)
+option(LIBDISTRIBUTED_DEBUG_WORK_QUEUE_TERMINATION "Print Debug information in the work_queue" OFF)
 add_library(libdistributed
   #core features
     src/work_queue.cc

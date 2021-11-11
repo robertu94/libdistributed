@@ -100,7 +100,7 @@ TEST(test_work_queue, single_withstop) {
   using response = std::tuple<int, double>;
   int size;
   MPI_Comm_size(MPI_COMM_WORLD, &size);
-  std::vector<request> tasks(size*2);
+  std::vector<request> tasks(static_cast<size_t>(size)*2);
   for (int i = 0; i < 2*size; ++i) {
     tasks[i] = {i};
   }
@@ -118,9 +118,11 @@ TEST(test_work_queue, single_withstop) {
         auto req_value = std::get<0>(req);
         if(req_value != 0) {
           for (int i = 0; i < 3 && !token.stop_requested(); ++i) {
+            std::cout << "worker " << rank  << " sleeps" << std::endl;
             std::this_thread::sleep_for(50ms);
           }
         } else {
+          std::cout << "worker " << rank << " requests stop" << std::endl;
           token.request_stop();
         }
         return std::make_tuple(req_value, std::pow(req_value, 2));
@@ -128,7 +130,8 @@ TEST(test_work_queue, single_withstop) {
       [&](response res) {
         int i; double d;
         i = std::get<int>(res);
-        i = std::get<double>(res);
+        d = std::get<double>(res);
+        std::cout << "master recv " << i << " " << d << std::endl;
         results.push_back(res);
       }
       );

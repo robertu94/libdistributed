@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <unordered_set>
 #include <mpi.h>
+#include <iostream>
 
 #include "libdistributed_task_manager.h"
 #include "libdistributed_work_queue_options.h"
 #include "libdistributed_comm.h"
+#include "libdistributed_version.h"
 
 namespace distributed {
 namespace queue {
@@ -58,36 +60,49 @@ public:
     : TaskManager<RequestType, MPI_Comm>()
     , queue_comm(options.get_native_queue_comm())
     , subcomm(subcomm)
-    , stop_request()
-    , flag(false)
     , ROOT(options.get_root())
     , num_workers_v(count_unique(options.get_groups()) - 1)
   {
-    MPI_Ibcast(&done, 1, MPI_INT, ROOT, queue_comm, &stop_request);
+    MPI_Alloc_mem(sizeof(int), MPI_INFO_NULL, &flag);
+    *flag = 0;
+    MPI_Win_create(flag, sizeof(int), sizeof(int), MPI_INFO_NULL, queue_comm, &win);
+  }
+
+  ~WorkerTaskManager() {
+    MPI_Barrier(queue_comm);
+    MPI_Win_free(&win);
+    MPI_Free_mem(flag);
   }
 
   bool stop_requested() override {
-    if(!flag) {
-      MPI_Test(&stop_request, &flag, MPI_STATUS_IGNORE);
-    }
-    return flag;
+    int result = 0;
+    int zero = 0;
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, /*target_rank*/ROOT, /*assert*/0, win);
+    MPI_Fetch_and_op(&zero, &result, MPI_INT, /*target_rank*/ROOT, /*target_disp*/0, MPI_NO_OP, win);
+    MPI_Win_unlock(ROOT, win);
+#if LIBDISTRIBUTED_DEBUG_WORK_QUEUE_TERMINATION
+    int rank;
+    MPI_Comm_rank(queue_comm, &rank);
+    std::cout << "impl worker " << rank <<  " checks stop " << std::boolalpha << static_cast<bool>(result) << std::endl;
+#endif
+    return result;
   }
 
-  void wait_stopped() {
-    if(!flag) {
-      MPI_Wait(&stop_request, MPI_STATUS_IGNORE);
-      flag = true;
-    }
-  }
 
   void request_stop() override {
-    ResponseType done{};
-    comm::send(done, ROOT, (int)worker_status::cancel, queue_comm);
+#if LIBDISTRIBUTED_DEBUG_WORK_QUEUE_TERMINATION
+    int rank;
+    MPI_Comm_rank(queue_comm, &rank);
+    std::cout << "impl worker " << rank <<  " issues stop " << std::endl;
+#endif
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, /*target_rank*/ROOT, /*assert*/0, win);
+    int one = 1, ignore=0;
+    MPI_Fetch_and_op(&one, &ignore, MPI_INT, /*target_rank*/ROOT, /*target_disp*/0, MPI_REPLACE, win);
+    MPI_Win_unlock(ROOT, win);
   }
 
   void push(RequestType const& request) override {
     ResponseType response;
-    MPI_Request mpi_request;
     //let master know a new task is coming
     comm::send(response, 0, (int)worker_status::new_task, queue_comm);
 
@@ -105,9 +120,8 @@ public:
 
   private:
   MPI_Comm queue_comm, subcomm;
-  MPI_Request stop_request;
-  int flag;
-  int done;//used by MPI_Ibcast for syncronization, do not read unless flag==true
+  MPI_Win win;
+  int* flag;
   const int ROOT;
   size_t num_workers_v;
 };
@@ -121,28 +135,48 @@ public:
     : TaskManager<RequestType, MPI_Comm>(),
       comm(comm),
       subcomm(subcomm),
-      is_stop_requested(0),
       ROOT(options.get_root()),
       num_workers_v(count_unique(options.get_groups())-1)
   {
+      MPI_Alloc_mem(sizeof(int), MPI_INFO_NULL, &flag);
+      *flag = 0;
+      MPI_Win_create(flag, sizeof(int), sizeof(int), MPI_INFO_NULL, comm, &win);
        while(begin != end) {
         requests.emplace(*begin);
          ++begin;
        }
   }
 
+  ~MasterTaskManager() {
+    MPI_Barrier(comm);
+    MPI_Win_free(&win);
+    MPI_Free_mem(flag);
+  }
+
   bool stop_requested() override {
-    return is_stop_requested == 1;
+    int result = 0;
+    int zero = 0;
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, /*target_rank*/ROOT, /*assert*/0, win);
+    MPI_Fetch_and_op(&zero, &result, MPI_INT, /*target_rank*/ROOT, /*target_disp*/0, MPI_NO_OP, win);
+    MPI_Win_unlock(ROOT, win);
+#if LIBDISTRIBUTED_DEBUG_WORK_QUEUE_TERMINATION
+    int rank;
+    MPI_Comm_rank(comm, &rank);
+    std::cout << "impl master " << rank <<  " checks stop " << std::boolalpha << static_cast<bool>(result) << std::endl;
+#endif
+    return result;
   }
 
   void request_stop() override {
-    if(is_stop_requested == 0)
-    {
-      MPI_Request request;
-      is_stop_requested = 1;
-      MPI_Ibcast(&is_stop_requested, 1, MPI_INT, ROOT, comm, &request);
-      MPI_Wait(&request, MPI_STATUS_IGNORE);
-    }
+#if LIBDISTRIBUTED_DEBUG_WORK_QUEUE_TERMINATION
+    int rank;
+    MPI_Comm_rank(comm, &rank);
+    std::cout << "impl worker " << rank <<  " issues stop " << std::endl;
+#endif
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, /*target_rank*/ROOT, /*assert*/0, win);
+    int one = 1, ignore=0;
+    MPI_Fetch_and_op(&one, &ignore, MPI_INT, /*target_rank*/ROOT, /*target_disp*/0, MPI_REPLACE, win);
+    MPI_Win_unlock(ROOT, win);
   }
 
   void push(RequestType const& request) override {
@@ -193,10 +227,11 @@ public:
 
   private:
   MPI_Comm comm, subcomm;
-  int is_stop_requested;
   std::queue<RequestType> requests;
   const int ROOT;
   size_t num_workers_v;
+  int* flag;
+  MPI_Win win;
 };
 
 template <class RequestType, class ResponseType, class TaskForwardIt, class Function>
@@ -211,7 +246,7 @@ void master_main(MPI_Comm subcom, TaskForwardIt tasks_begin, TaskForwardIt tasks
       for (size_t i = 0; i < groups.size(); ++i) {
         //if inserted, and not a master process 
         if(group_ids.insert(groups[i]).second && (not(i == options.get_root() || groups[options.get_root()] == groups[i]))) {
-          workers.push(i);
+          workers.push(static_cast<int>(i));
         }
       }
     }
@@ -255,6 +290,9 @@ void master_main(MPI_Comm subcom, TaskForwardIt tasks_begin, TaskForwardIt tasks
           }
           break;
         case worker_status::cancel:
+#if LIBDISTRIBUTED_DEBUG_WORK_QUEUE_TERMINATION
+          std::cout << "master recv stop from worker " << response_status.MPI_SOURCE << std::endl;
+#endif
           task_manager.request_stop();
           break;
         case worker_status::new_task:
@@ -288,30 +326,37 @@ class MasterAuxTaskManager final : public TaskManager<RequestType, MPI_Comm>
   MasterAuxTaskManager(MPI_Comm subcomm, work_queue_options<RequestType> const& options):
     queue_comm(options.get_native_queue_comm()),
     subcomm(subcomm),
-    stop_request(),
-    flag(0),
     request_done(0),
     ROOT(options.get_root()),
     num_workers_v(count_unique(options.get_groups()) -1)
   {
-    MPI_Ibcast(&done, 1, MPI_INT, ROOT, queue_comm, &stop_request);
+      MPI_Alloc_mem(sizeof(int), MPI_INFO_NULL, &flag);
+      *flag = 0;
+      MPI_Win_create(flag, sizeof(int), sizeof(int), MPI_INFO_NULL, queue_comm, &win);
   }
 
   ~MasterAuxTaskManager() {
-    if(!flag) {
-      MPI_Wait(&stop_request, MPI_STATUS_IGNORE);
-    }
+    MPI_Barrier(queue_comm);
+    MPI_Win_free(&win);
+    MPI_Free_mem(flag);
   }
 
   void request_stop() final {
-    request_done = 1;
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, /*target_rank*/ROOT, /*assert*/0, win);
+    int one = 1, ignore=0;
+    MPI_Fetch_and_op(&one, &ignore, MPI_INT, /*target_rank*/ROOT, /*target_disp*/0, MPI_REPLACE, win);
+    MPI_Win_unlock(0, win);
   }
 
   bool stop_requested() final {
-    if(!flag) {
-      MPI_Test(&stop_request, &flag, MPI_STATUS_IGNORE);
-    }
-    return flag;
+    int rank;
+    MPI_Comm_rank(queue_comm, &rank);
+    int result = 0;
+    int zero = 0;
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, /*target_rank*/ROOT, /*assert*/0, win);
+    MPI_Fetch_and_op(&zero, &result, MPI_INT, /*target_rank*/ROOT, /*target_disp*/0, MPI_NO_OP, win);
+    MPI_Win_unlock(ROOT, win);
+    return result;
   }
 
   void push(RequestType const& request) final {
@@ -339,9 +384,9 @@ class MasterAuxTaskManager final : public TaskManager<RequestType, MPI_Comm>
 
   private:
   MPI_Comm queue_comm, subcomm;
-  MPI_Request stop_request;
+  MPI_Win win;
   std::vector<RequestType> requests;
-  int flag, done, request_done;
+  int* flag, done, request_done;
   const int ROOT;
   size_t num_workers_v;
 };
@@ -428,7 +473,6 @@ void worker_main(MPI_Comm subcomm, Function worker_fn, work_queue_options<Reques
     }
   }
 
-  stop_token.wait_stopped();
 }
 
 template <class RequestType, class ResponseType, class Function>
@@ -444,7 +488,6 @@ void worker_aux(MPI_Comm subcomm, Function worker_fn, work_queue_options<Request
     }
   }
 
-  task_manager.wait_stopped();
 }
 
 template <class RequestType>
@@ -464,6 +507,9 @@ class NoWorkersTaskManager: public TaskManager<RequestType, MPI_Comm> {
   }
 
   void request_stop() override {
+#if LIBDISTRIBUTED_DEBUG_WORK_QUEUE_TERMINATION
+    std::cout << "no workers says stop" << std::endl;
+#endif
     is_stop_requested = true;
   }
 
