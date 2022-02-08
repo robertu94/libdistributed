@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(libdistributed VERSION "0.2.0" LANGUAGES CXX)
+project(libdistributed VERSION "0.3.0" LANGUAGES CXX)
 
 #correct was to set a default build type
 # https://blog.kitware.com/cmake-and-the-default-build-type/
@@ -69,14 +69,27 @@ if(USE_CLANG_TIDY)
   set_target_properties(libdistributed PROPERTIES C_CLANG_TIDY "${CLANG_TIDY}")
 endif()
 
-export(TARGETS libdistributed NAMESPACE LibDistributed:: FILE
-  LibDistributedConfig.cmake)
-install(TARGETS libdistributed EXPORT LibDistributedConfig
+install(TARGETS libdistributed EXPORT LibDistributedTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   )
-install(EXPORT LibDistributedConfig NAMESPACE LibDistributed:: DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/LibDistributed/cmake)
+install(EXPORT LibDistributedTargets NAMESPACE LibDistributed:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LibDistributed)
+include(CMakePackageConfigHelpers)
+configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/LibDistributedConfig.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/LibDistributedConfig.cmake"
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LibDistributed
+)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/LibDistributedConfigVersion.cmake"
+  VERSION "${PROJECT_VERSION}"
+  COMPATIBILITY AnyNewerVersion
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/LibDistributedConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/LibDistributedConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LibDistributed
+)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/libdistributed)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/libdistributed_version.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/libdistributed)

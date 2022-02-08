@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/LibDistributedTargets.cmake")
+
+find_package(MPI COMPONENTS CXX REQUIRED)
+
+check_required_components(LibDistributed)

@@ -230,6 +230,7 @@ struct serializer
     }                                                                          \
   };
 
+define_basic_type(bool, MPI_CXX_BOOL);
 define_basic_type(int8_t, MPI_INT8_T);
 define_basic_type(int16_t, MPI_INT16_T);
 define_basic_type(int32_t, MPI_INT32_T);
