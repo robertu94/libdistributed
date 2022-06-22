@@ -110,8 +110,8 @@ public:
     comm::send(request, 0, (int)worker_status::new_task, queue_comm);
   }
 
-  MPI_Comm get_subcommunicator() override {
-    return subcomm;
+  MPI_Comm* get_subcommunicator() override {
+    return &subcomm;
   }
 
   size_t num_workers() const override {
@@ -199,8 +199,8 @@ public:
     return requests.empty();
   }
 
-  MPI_Comm get_subcommunicator() override {
-    return subcomm;
+  MPI_Comm* get_subcommunicator() override {
+    return &subcomm;
   }
 
   size_t num_workers() const override{
@@ -374,8 +374,8 @@ class MasterAuxTaskManager final : public TaskManager<RequestType, MPI_Comm>
     requests.clear();
   }
 
-  MPI_Comm get_subcommunicator() final {
-    return subcomm;
+  MPI_Comm* get_subcommunicator() final {
+    return &subcomm;
   }
 
   size_t num_workers() const final {
@@ -533,8 +533,8 @@ class NoWorkersTaskManager: public TaskManager<RequestType, MPI_Comm> {
     return requests.empty();
   }
 
-  MPI_Comm get_subcommunicator() override {
-    return MPI_COMM_SELF;
+  MPI_Comm* get_subcommunicator() override {
+    return &subcomm;
   }
 
   size_t num_workers() const override {
@@ -542,6 +542,7 @@ class NoWorkersTaskManager: public TaskManager<RequestType, MPI_Comm> {
   }
 
   private:
+  MPI_Comm subcomm = MPI_COMM_SELF;
   bool is_stop_requested = false;
   std::queue<RequestType> requests{};
 };

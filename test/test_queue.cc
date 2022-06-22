@@ -279,10 +279,10 @@ TEST(test_work_queue, worker_masters_groups) {
       std::begin(tasks), std::end(tasks),
       [&executions](request req, TaskManager<request, MPI_Comm>& token) {
         auto req_value = std::get<0>(req);
-        MPI_Comm subcomm = token.get_subcommunicator();
+        MPI_Comm* subcomm = token.get_subcommunicator();
         int subcomm_size = 0, subcomm_rank = 0;
-        MPI_Comm_size(subcomm, &subcomm_size);
-        MPI_Comm_rank(subcomm, &subcomm_rank);
+        MPI_Comm_size(*subcomm, &subcomm_size);
+        MPI_Comm_rank(*subcomm, &subcomm_rank);
         EXPECT_EQ(subcomm_size, 2);
         if(subcomm_rank == 0) {
           ++executions;
@@ -293,9 +293,9 @@ TEST(test_work_queue, worker_masters_groups) {
         int i; double d;
         i = std::get<int>(res);
         i = std::get<double>(res);
-        MPI_Comm subcomm = token.get_subcommunicator();
+        MPI_Comm* subcomm = token.get_subcommunicator();
         int subcomm_size = 0;
-        MPI_Comm_size(subcomm, &subcomm_size);
+        MPI_Comm_size(*subcomm, &subcomm_size);
         EXPECT_EQ(subcomm_size, 2);
 
         if(i == 1) {
@@ -339,10 +339,10 @@ TEST(test_work_queue, worker_masters_groups_with_cancelation) {
       std::begin(tasks), std::end(tasks),
       [&executions](request req, TaskManager<request, MPI_Comm>& token) {
         auto req_value = std::get<0>(req);
-        MPI_Comm subcomm = token.get_subcommunicator();
+        MPI_Comm* subcomm = token.get_subcommunicator();
         int subcomm_size = 0, subcomm_rank = 0;
-        MPI_Comm_size(subcomm, &subcomm_size);
-        MPI_Comm_rank(subcomm, &subcomm_rank);
+        MPI_Comm_size(*subcomm, &subcomm_size);
+        MPI_Comm_rank(*subcomm, &subcomm_rank);
         EXPECT_EQ(subcomm_size, 2);
         if(subcomm_rank == 0) {
           ++executions;
@@ -353,10 +353,10 @@ TEST(test_work_queue, worker_masters_groups_with_cancelation) {
         int i; double d;
         i = std::get<int>(res);
         i = std::get<double>(res);
-        MPI_Comm subcomm = token.get_subcommunicator();
+        MPI_Comm* subcomm = token.get_subcommunicator();
         int subcomm_size = 0, subcomm_rank = 0;
-        MPI_Comm_size(subcomm, &subcomm_size);
-        MPI_Comm_size(subcomm, &subcomm_rank);
+        MPI_Comm_size(*subcomm, &subcomm_size);
+        MPI_Comm_size(*subcomm, &subcomm_rank);
         EXPECT_EQ(subcomm_size, 2);
 
         if(i == 1) {

@@ -47,7 +47,7 @@ class TaskManager: public StopToken {
   /**
    * Request a sub-communicator for the current process group
    */
-  virtual CommunicatorType get_subcommunicator()=0;
+  virtual CommunicatorType* get_subcommunicator()=0;
 
   /**
    * \returns the number of groups of worker processes available
