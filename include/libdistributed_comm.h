@@ -381,8 +381,10 @@ struct serializer<std::pair<T, V>>
     if (serializer<std::pair<T,V>>::mpi_type::value) {
       return MPI_Recv(&t, 1, dtype(), source, tag, comm, status);
     } else {
-      return serializer<T>::recv(t.first, source, tag, comm, status);
-      return serializer<V>::recv(t.second, source, tag, comm, status);
+      int ret = 0;
+      ret |= serializer<T>::recv(t.first, source, tag, comm, status);
+      ret |= serializer<V>::recv(t.second, source, tag, comm, status);
+      return ret;
     }
   }
   /** 
@@ -396,8 +398,10 @@ struct serializer<std::pair<T, V>>
     if (serializer<std::pair<T,V>>::mpi_type::value) {
       return MPI_Bcast(&t, 1, dtype(), root, comm);
     } else {
-      return serializer<T>::bcast(t.first, root, comm);
-      return serializer<V>::bcast(t.second, root, comm);
+      int ret = 0;
+      ret |= serializer<T>::bcast(t.first, root, comm);
+      ret |= serializer<V>::bcast(t.second, root, comm);
+      return ret;
     }
   }
 };

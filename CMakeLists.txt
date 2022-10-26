@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(libdistributed VERSION "0.4.0" LANGUAGES CXX)
+project(libdistributed VERSION "0.4.1" LANGUAGES CXX)
 
 #correct was to set a default build type
 # https://blog.kitware.com/cmake-and-the-default-build-type/
