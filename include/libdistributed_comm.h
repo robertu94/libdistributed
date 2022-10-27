@@ -357,8 +357,10 @@ struct serializer<std::pair<T, V>>
     if (serializer<std::pair<T,V>>::mpi_type::value) {
       return MPI_Send(&t, 1, dtype(), dest, tag, comm);
     } else {
-      return serializer<T>::send(t.first, dest, tag, comm);
-      return serializer<V>::send(t.second, dest, tag, comm);
+      int ret = 0;
+      ret |= serializer<T>::send(t.first, dest, tag, comm);
+      ret |= serializer<V>::send(t.second, dest, tag, comm);
+      return ret;
     }
   }
 
