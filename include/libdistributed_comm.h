@@ -381,11 +381,11 @@ struct serializer<std::pair<T, V>>
     status->MPI_TAG = tag;
 
     if (serializer<std::pair<T,V>>::mpi_type::value) {
-      return MPI_Recv(&t, 1, dtype(), source, tag, comm, status);
+      return MPI_Recv(&t, 1, dtype(), status->MPI_SOURCE, tag, comm, status);
     } else {
       int ret = 0;
-      ret |= serializer<T>::recv(t.first, source, tag, comm, status);
-      ret |= serializer<V>::recv(t.second, source, tag, comm, status);
+      ret |= serializer<T>::recv(t.first, status->MPI_SOURCE, status->MPI_TAG, comm, status);
+      ret |= serializer<V>::recv(t.second, status->MPI_SOURCE, status->MPI_TAG, comm, status);
       return ret;
     }
   }
